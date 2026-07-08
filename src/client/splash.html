@@ -1,32 +1,58 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <link rel="stylesheet" type="text/css" href="splash.css" />
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0"
-    />
-    <title>devvit</title>
-  </head>
-  <body class="app">
-    <img class="snoo" src="/snoo.png" alt="Snoo" />
-    <div class="content">
-      <h1 class="title" id="title"></h1>
-      <p class="description">
-        Edit <span class="code">src/client/splash.ts</span> to get started.
-      </p>
+
+<head>
+  <link rel="stylesheet" type="text/css" href="splash.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+    content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0" />
+  <title>Daily Battles</title>
+</head>
+
+<body class="app">
+  <div class="grid-overlay" aria-hidden="true"></div>
+
+  <div class="content">
+    <div class="badge" id="greeting"></div>
+
+    <div class="mark-wrap">
+      <div class="sweep" aria-hidden="true"></div>
+      <svg class="mark" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true">
+        <circle cx="28" cy="28" r="26" stroke="#3ddc97" stroke-width="1.5" opacity="0.5" />
+        <circle cx="28" cy="28" r="18" stroke="#3ddc97" stroke-width="1" opacity="0.35" />
+        <circle cx="28" cy="28" r="10" stroke="#3ddc97" stroke-width="1" opacity="0.25" />
+        <line x1="28" y1="2" x2="28" y2="54" stroke="#1c5c47" stroke-width="1" />
+        <line x1="2" y1="28" x2="54" y2="28" stroke="#1c5c47" stroke-width="1" />
+        <circle cx="28" cy="28" r="3" fill="#d4a94a" />
+      </svg>
     </div>
-    <div>
-      <button class="start-button" id="start-button">Start</button>
+
+    <h1 class="title">DAILY BATTLES</h1>
+    <p class="tagline">One hidden fleet. Thirty bombs.<br />Same puzzle for everyone, every day.</p>
+
+    <div class="fleet-label">Today's Fleet</div>
+    <div class="fleet-preview" aria-hidden="true">
+      <span class="ship ship-5"></span>
+      <span class="ship ship-4"></span>
+      <span class="ship ship-3"></span>
+      <span class="ship ship-3"></span>
+      <span class="ship ship-2"></span>
+      <span class="ship ship-1"></span>
     </div>
-    <footer class="footer">
-      <div class="docs-link" tabindex="0" id="docs-link">Docs</div>
-      <span class="divider">|</span>
-      <div class="docs-link" tabindex="0" id="playtest-link">r/Devvit</div>
-      <span class="divider">|</span>
-      <div class="docs-link" tabindex="0" id="discord-link">Discord</div>
-    </footer>
-    <script type="module" src="splash.ts" defer></script>
-  </body>
+
+    <button class="start-button" id="start-button">Play Today's Puzzle</button>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-link" tabindex="0" id="docs-link">Docs</div>
+    <span class="divider">&middot;</span>
+    <div class="footer-link" tabindex="0" id="playtest-link">r/Devvit</div>
+    <span class="divider">&middot;</span>
+    <div class="footer-link" tabindex="0" id="discord-link">Discord</div>
+  </footer>
+
+  <script type="module" src="splash.ts" defer></script>
+</body>
+
 </html>
