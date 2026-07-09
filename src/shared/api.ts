@@ -1,3 +1,8 @@
+// src/shared/api.ts
+//
+// Types shared between client and server. Kept framework-agnostic —
+// no Devvit imports — so both sides can import freely.
+
 export type InitResponse = {
   type: "init";
   postId: string;
@@ -17,7 +22,13 @@ export type DecrementResponse = {
   count: number;
 };
 
-export type FleetManifestEntry = { id: number; size: number };
+export type FleetManifestEntry = {
+  id: number;
+  size: number;
+  name: string;
+  shapeName: 'L' | 'square' | 'Z' | 'I' | 'corner' | 'domino';
+  cells: { dr: number; dc: number }[]; // canonical shape only — never today's rotation
+};
 
 // GET /api/daily-puzzle
 export type GetDailyPuzzleResponse = {

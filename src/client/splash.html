@@ -33,12 +33,45 @@
 
     <div class="fleet-label">Today's Fleet</div>
     <div class="fleet-preview" aria-hidden="true">
-      <span class="ship ship-5"></span>
-      <span class="ship ship-4"></span>
-      <span class="ship ship-3"></span>
-      <span class="ship ship-3"></span>
-      <span class="ship ship-2"></span>
-      <span class="ship ship-1"></span>
+      <!-- Carrier: L, 5 cells -->
+      <div class="ship-icon">
+        <span class="blk" style="grid-row:1;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:1"></span>
+        <span class="blk" style="grid-row:3;grid-column:1"></span>
+        <span class="blk" style="grid-row:4;grid-column:1"></span>
+        <span class="blk" style="grid-row:4;grid-column:2"></span>
+      </div>
+      <!-- Battleship: square, 4 cells -->
+      <div class="ship-icon">
+        <span class="blk" style="grid-row:1;grid-column:1"></span>
+        <span class="blk" style="grid-row:1;grid-column:2"></span>
+        <span class="blk" style="grid-row:2;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:2"></span>
+      </div>
+      <!-- Destroyer: Z, 4 cells -->
+      <div class="ship-icon">
+        <span class="blk" style="grid-row:1;grid-column:2"></span>
+        <span class="blk" style="grid-row:1;grid-column:3"></span>
+        <span class="blk" style="grid-row:2;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:2"></span>
+      </div>
+      <!-- Submarine: straight, 3 cells -->
+      <div class="ship-icon">
+        <span class="blk" style="grid-row:1;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:1"></span>
+        <span class="blk" style="grid-row:3;grid-column:1"></span>
+      </div>
+      <!-- Patrol Boat: corner, 3 cells -->
+      <div class="ship-icon">
+        <span class="blk" style="grid-row:1;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:2"></span>
+      </div>
+      <!-- Scout: domino, 2 cells -->
+      <div class="ship-icon">
+        <span class="blk" style="grid-row:1;grid-column:1"></span>
+        <span class="blk" style="grid-row:2;grid-column:1"></span>
+      </div>
     </div>
 
     <button class="start-button" id="start-button">Play Today's Puzzle</button>

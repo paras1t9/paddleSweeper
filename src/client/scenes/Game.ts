@@ -4,15 +4,31 @@ import type {
   GetDailyPuzzleResponse,
   BombRequest,
   BombResponse,
+  FleetManifestEntry,
 } from '../../shared/api';
 
 const GRID_SIZE = 10;
 const CELL = 36;
 const GRID_PX = GRID_SIZE * CELL;
-const PANEL_GAP = 30;
-const PANEL_W = 190;
-const DESIGN_W = GRID_PX + PANEL_GAP + PANEL_W;
-const DESIGN_H = GRID_PX + 70; // grid + header row
+const HEADER_H = 44;
+const MESSAGE_H = 30;
+const FLEET_BLOCK_PX = 13;
+const FLEET_ENTRY_W_SIDE = 85;
+const FLEET_ENTRY_W_STACK = 127;
+const FLEET_ENTRY_H = 78; // label + tallest shape (4 rows) + gap, same in both modes
+
+// Side-by-side (wide/landscape): grid + a 2-column fleet panel beside it.
+const SIDE_PANEL_GAP = 22;
+const SIDE_PANEL_W = FLEET_ENTRY_W_SIDE * 2;
+const SIDE_DESIGN_W = GRID_PX + SIDE_PANEL_GAP + SIDE_PANEL_W;
+const SIDE_DESIGN_H = HEADER_H + GRID_PX + MESSAGE_H + 20;
+
+// Stacked (narrow/portrait phones): 3-column fleet panel below the grid.
+// Needs much less width than side-by-side, so it scales up instead of
+// shrinking to illegibility on a phone screen.
+const STACK_DESIGN_W = GRID_PX + 20;
+const STACK_FLEET_GAP = 26;
+const STACK_DESIGN_H = HEADER_H + GRID_PX + STACK_FLEET_GAP + 20 + FLEET_ENTRY_H * 2 + MESSAGE_H + 10;
 
 const COLORS = {
   cellIdle: 0x142c4a,
@@ -30,29 +46,35 @@ type CellState = 'idle' | 'miss' | 'hit' | 'sunk';
 export class Game extends Scene {
   camera: Phaser.Cameras.Scene2D.Camera;
 
+  bgGraphics: Phaser.GameObjects.Graphics | null = null;
   boardContainer: Phaser.GameObjects.Container | null = null;
   cellRects: Phaser.GameObjects.Rectangle[][] = [];
   cellStates: CellState[][] = [];
-  fleet: { id: number; size: number }[] = [];
+  fleet: FleetManifestEntry[] = [];
   fleetSunk: Set<number> = new Set();
   fleetBlocks: Phaser.GameObjects.Rectangle[][] = [];
   fleetLabels: Phaser.GameObjects.Text[] = [];
 
-  bombsMax = 30;
+  stacked = false;
+  designW = SIDE_DESIGN_W;
+  designH = SIDE_DESIGN_H;
+
+  bombsMax = 32;
   bombsUsed = 0;
   gameOver = false;
   won = false;
 
   bombCountText: Phaser.GameObjects.Text | null = null;
   messageText: Phaser.GameObjects.Text | null = null;
+  scanline: Phaser.GameObjects.Rectangle | null = null;
+  lastPuzzleData: GetDailyPuzzleResponse | null = null;
 
   constructor() {
     super('Game');
   }
 
   init(): void {
-    // Reset all cached state — Phaser reuses this Scene instance if the
-    // player replays, so nothing from a previous puzzle should leak in.
+    this.bgGraphics = null;
     this.boardContainer = null;
     this.cellRects = [];
     this.cellStates = [];
@@ -60,17 +82,25 @@ export class Game extends Scene {
     this.fleetSunk = new Set();
     this.fleetBlocks = [];
     this.fleetLabels = [];
-    this.bombsMax = 30;
+    this.stacked = false;
+    this.designW = SIDE_DESIGN_W;
+    this.designH = SIDE_DESIGN_H;
+    this.bombsMax = 32;
     this.bombsUsed = 0;
     this.gameOver = false;
     this.won = false;
     this.bombCountText = null;
     this.messageText = null;
+    this.scanline = null;
+    this.lastPuzzleData = null;
   }
 
   create() {
     this.camera = this.cameras.main;
     this.camera.setBackgroundColor(0x0a1628);
+
+    this.bgGraphics = this.add.graphics();
+    this.drawBackground(this.scale.width, this.scale.height);
 
     const loadingText = this.add
       .text(this.scale.width / 2, this.scale.height / 2, 'Loading today\'s puzzle...', {
@@ -87,6 +117,23 @@ export class Game extends Scene {
     });
   }
 
+  // Faint sonar-grid texture across the whole scene, matching the splash.
+  // Lives outside boardContainer since it should cover the full viewport
+  // regardless of how the board itself is scaled/positioned.
+  private drawBackground(width: number, height: number) {
+    if (!this.bgGraphics) return;
+    const g = this.bgGraphics;
+    g.clear();
+    g.lineStyle(1, COLORS.radarGreen, 0.04);
+    const step = 32;
+    for (let x = 0; x < width; x += step) {
+      g.lineBetween(x, 0, x, height);
+    }
+    for (let y = 0; y < height; y += step) {
+      g.lineBetween(0, y, width, y);
+    }
+  }
+
   private async loadPuzzle(loadingText: Phaser.GameObjects.Text) {
     try {
       const response = await fetch('/api/daily-puzzle');
@@ -94,7 +141,8 @@ export class Game extends Scene {
       const data = (await response.json()) as GetDailyPuzzleResponse;
 
       loadingText.destroy();
-      this.buildBoard(data);
+      this.lastPuzzleData = data;
+      this.buildBoard(data, false);
     } catch (error) {
       console.error('Failed to load daily puzzle:', error);
       loadingText.setText('Could not load puzzle. Please try again.');
@@ -102,7 +150,7 @@ export class Game extends Scene {
     }
   }
 
-  private buildBoard(data: GetDailyPuzzleResponse) {
+  private buildBoard(data: GetDailyPuzzleResponse, instant: boolean) {
     this.fleet = data.fleet;
     this.bombsMax = data.bombsMax;
     this.bombsUsed = data.bombsUsed;
@@ -111,8 +159,26 @@ export class Game extends Scene {
     this.fleetSunk = new Set(data.sunkShipIds);
     this.cellStates = data.cellStates as CellState[][];
 
+    // Chosen at build time based on current aspect ratio — a tall narrow
+    // viewport (phone portrait) gets the stacked layout, which needs far
+    // less width and so can render at a legible, crisp size instead of
+    // shrinking everything to fit a side-by-side layout designed for
+    // desktop. Re-evaluated by layout() on resize/orientation change too —
+    // see rebuildForModeChange().
+    this.stacked = this.scale.height > this.scale.width;
+    this.designW = this.stacked ? STACK_DESIGN_W : SIDE_DESIGN_W;
+    this.designH = this.stacked ? STACK_DESIGN_H : SIDE_DESIGN_H;
+
     const container = this.add.container(0, 0);
     this.boardContainer = container;
+
+    // ---- Console frame ----
+    const frame = this.add.graphics();
+    const framePad = 14;
+    frame.lineStyle(1, COLORS.radarGreen, 0.35);
+    frame.strokeRect(-framePad, -framePad, this.designW + framePad * 2, this.designH + framePad * 2);
+    this.drawCornerTicks(frame, -framePad, -framePad, this.designW + framePad * 2, this.designH + framePad * 2);
+    container.add(frame);
 
     // ---- Header ----
     const header = this.add.text(0, 0, 'DAILY BATTLES', {
@@ -123,14 +189,14 @@ export class Game extends Scene {
     });
     container.add(header);
 
-    this.bombCountText = this.add.text(GRID_PX - 90, 0, `BOMBS: ${this.bombsMax - this.bombsUsed}`, {
+    this.bombCountText = this.add.text(this.designW - 100, 4, `BOMBS: ${this.bombsMax - this.bombsUsed}`, {
       fontFamily: 'Courier New',
       fontSize: 14,
       color: '#d4a94a',
     });
     container.add(this.bombCountText);
 
-    const gridOriginY = 40;
+    const gridOriginY = HEADER_H;
 
     // ---- Grid ----
     for (let r = 0; r < GRID_SIZE; r++) {
@@ -140,8 +206,7 @@ export class Game extends Scene {
         const y = gridOriginY + r * CELL + CELL / 2;
         const rect = this.add
           .rectangle(x, y, CELL - 3, CELL - 3, COLORS.cellIdle)
-          .setStrokeStyle(1, COLORS.gridLine)
-          .setInteractive({ useHandCursor: true });
+          .setStrokeStyle(1, COLORS.gridLine);
 
         this.applyCellVisual(rect, this.cellStates[r]?.[c] ?? 'idle');
 
@@ -159,46 +224,68 @@ export class Game extends Scene {
 
         container.add(rect);
         row.push(rect);
+
+        if (instant) {
+          rect.setScale(1);
+          rect.setInteractive({ useHandCursor: true });
+        } else {
+          rect.setScale(0);
+          const stagger = (r * GRID_SIZE + c) * 14;
+          this.tweens.add({
+            targets: rect,
+            scale: 1,
+            duration: 260,
+            delay: stagger,
+            ease: 'Back.easeOut',
+            onComplete: () => rect.setInteractive({ useHandCursor: true }),
+          });
+        }
       }
       this.cellRects.push(row);
     }
 
-    // ---- Silhouette panel ----
-    const panelX = GRID_PX + PANEL_GAP;
-    const fleetLabel = this.add.text(panelX, gridOriginY - 20, 'ENEMY FLEET', {
+    // Slow scanline sweep down the grid — decorative, matches the sonar
+    // language from the splash and main menu.
+    const scanline = this.add.rectangle(GRID_PX / 2, gridOriginY, GRID_PX, 2, COLORS.radarGreen, 0.25);
+    container.add(scanline);
+    this.scanline = scanline;
+    this.tweens.add({
+      targets: scanline,
+      y: gridOriginY + GRID_PX,
+      duration: 3200,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+    });
+
+    // ---- Fleet panel ----
+    const fleetTitleY = this.stacked ? gridOriginY + GRID_PX + STACK_FLEET_GAP : gridOriginY - 20;
+    const fleetTitleX = this.stacked ? 0 : GRID_PX + SIDE_PANEL_GAP;
+    const fleetTitle = this.add.text(fleetTitleX, fleetTitleY, 'ENEMY FLEET', {
       fontFamily: 'Courier New',
       fontSize: 13,
       color: '#3ddc97',
     });
-    container.add(fleetLabel);
+    container.add(fleetTitle);
 
-    let cursorY = gridOriginY + 4;
-    const blockPx = 15;
-    this.fleet.forEach((ship) => {
-      const label = this.add.text(panelX, cursorY, `SIZE ${ship.size}`, {
-        fontFamily: 'Courier New',
-        fontSize: 11,
-        color: this.fleetSunk.has(ship.id) ? '#d4a94a' : '#6f8394',
-      });
-      container.add(label);
-      this.fleetLabels[ship.id] = label;
-      if (this.fleetSunk.has(ship.id)) label.setText(`SIZE ${ship.size}  \u2713 SUNK`);
+    const fleetCols = this.stacked ? 3 : 2;
+    const entryW = this.stacked ? FLEET_ENTRY_W_STACK : FLEET_ENTRY_W_SIDE;
+    const fleetOriginX = this.stacked ? 0 : GRID_PX + SIDE_PANEL_GAP;
+    const fleetOriginY = this.stacked ? fleetTitleY + 20 : gridOriginY + 4;
 
-      const blocks: Phaser.GameObjects.Rectangle[] = [];
-      for (let i = 0; i < ship.size; i++) {
-        const sunk = this.fleetSunk.has(ship.id);
-        const block = this.add
-          .rectangle(panelX + 62 + i * (blockPx + 2), cursorY + 6, blockPx, blockPx, sunk ? COLORS.brass : 0x1c3d61)
-          .setStrokeStyle(1, sunk ? 0xffe6b0 : COLORS.radarGreen);
-        container.add(block);
-        blocks.push(block);
-      }
-      this.fleetBlocks[ship.id] = blocks;
-      cursorY += 24;
+    this.fleet.forEach((ship, shipIndex) => {
+      const col = shipIndex % fleetCols;
+      const row = Math.floor(shipIndex / fleetCols);
+      const entryX = fleetOriginX + col * entryW;
+      const entryY = fleetOriginY + row * FLEET_ENTRY_H;
+      this.buildFleetEntry(container, entryX, entryY, ship, shipIndex, instant);
     });
 
     // ---- Message line ----
-    this.messageText = this.add.text(0, GRID_PX + gridOriginY + 10, '', {
+    const messageY = this.stacked
+      ? fleetOriginY + Math.ceil(this.fleet.length / fleetCols) * FLEET_ENTRY_H + 6
+      : gridOriginY + GRID_PX + 10;
+    this.messageText = this.add.text(0, messageY, '', {
       fontFamily: 'Courier New',
       fontSize: 13,
       color: '#6f8394',
@@ -210,6 +297,73 @@ export class Game extends Scene {
     }
 
     this.layout(this.scale.width, this.scale.height);
+  }
+
+  private drawCornerTicks(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number) {
+    const len = 12;
+    g.lineStyle(2, COLORS.brass, 0.8);
+    // top-left
+    g.lineBetween(x, y + len, x, y);
+    g.lineBetween(x, y, x + len, y);
+    // top-right
+    g.lineBetween(x + w - len, y, x + w, y);
+    g.lineBetween(x + w, y, x + w, y + len);
+    // bottom-left
+    g.lineBetween(x, y + h - len, x, y + h);
+    g.lineBetween(x, y + h, x + len, y + h);
+    // bottom-right
+    g.lineBetween(x + w - len, y + h, x + w, y + h);
+    g.lineBetween(x + w, y + h - len, x + w, y + h);
+  }
+
+  private buildFleetEntry(
+    container: Phaser.GameObjects.Container,
+    x: number,
+    y: number,
+    ship: FleetManifestEntry,
+    shipIndex: number,
+    instant: boolean
+  ) {
+    const sunk = this.fleetSunk.has(ship.id);
+    const label = this.add.text(x, y, sunk ? `${ship.name} \u2713` : ship.name, {
+      fontFamily: 'Courier New',
+      fontSize: 10,
+      color: sunk ? '#d4a94a' : '#6f8394',
+    });
+    container.add(label);
+    this.fleetLabels[ship.id] = label;
+
+    const blocks: Phaser.GameObjects.Rectangle[] = [];
+    ship.cells.forEach((cell) => {
+      const block = this.add
+        .rectangle(
+          x + cell.dc * FLEET_BLOCK_PX + FLEET_BLOCK_PX / 2,
+          y + 16 + cell.dr * FLEET_BLOCK_PX + FLEET_BLOCK_PX / 2,
+          FLEET_BLOCK_PX - 1,
+          FLEET_BLOCK_PX - 1,
+          sunk ? COLORS.brass : 0x1c3d61
+        )
+        .setStrokeStyle(1.5, sunk ? 0xffe6b0 : COLORS.radarGreen);
+      container.add(block);
+      blocks.push(block);
+    });
+    this.fleetBlocks[ship.id] = blocks;
+
+    if (instant) {
+      label.setAlpha(1);
+      blocks.forEach((b) => b.setAlpha(1));
+      return;
+    }
+
+    const rowTargets: (Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle)[] = [label, ...blocks];
+    rowTargets.forEach((t) => t.setAlpha(0));
+    this.tweens.add({
+      targets: rowTargets,
+      alpha: 1,
+      duration: 300,
+      delay: 400 + shipIndex * 120,
+      ease: 'Sine.easeOut',
+    });
   }
 
   private applyCellVisual(rect: Phaser.GameObjects.Rectangle, state: CellState) {
@@ -239,7 +393,7 @@ export class Game extends Scene {
       const result = (await response.json()) as BombResponse;
 
       if (result.result === 'already-bombed' || result.result === 'no-bombs-left') {
-        return; // stale click, nothing to animate
+        return;
       }
 
       const row = this.cellStates[r];
@@ -284,7 +438,7 @@ export class Game extends Scene {
   private spawnMissMark(r: number, c: number) {
     if (!this.boardContainer) return;
     const x = c * CELL + CELL / 2;
-    const y = 40 + r * CELL + CELL / 2;
+    const y = HEADER_H + r * CELL + CELL / 2;
     const dot = this.add.circle(x, y, 4, COLORS.fogDim);
     this.boardContainer.add(dot);
     this.tweens.add({ targets: dot, alpha: 0.5, duration: 200 });
@@ -293,7 +447,7 @@ export class Game extends Scene {
   private spawnHitFlash(r: number, c: number) {
     if (!this.boardContainer) return;
     const x = c * CELL + CELL / 2;
-    const y = 40 + r * CELL + CELL / 2;
+    const y = HEADER_H + r * CELL + CELL / 2;
     const ring = this.add.circle(x, y, 4, 0xffffff, 0).setStrokeStyle(2, 0xffe6b0);
     this.boardContainer.add(ring);
     this.tweens.addCounter({
@@ -315,7 +469,7 @@ export class Game extends Scene {
     const mid = cells[Math.floor(cells.length / 2)];
     if (mid) {
       const x = mid.c * CELL + CELL / 2;
-      const y = 40 + mid.r * CELL + CELL / 2;
+      const y = HEADER_H + mid.r * CELL + CELL / 2;
       for (let i = 0; i < 3; i++) {
         this.time.delayedCall(i * 150, () => {
           if (!this.boardContainer) return;
@@ -347,7 +501,7 @@ export class Game extends Scene {
     const ship = this.fleet.find((s) => s.id === shipId);
     if (label && ship) {
       label.setColor('#d4a94a');
-      label.setText(`SIZE ${ship.size}  \u2713 SUNK`);
+      label.setText(`${ship.name} \u2713`);
     }
   }
 
@@ -364,13 +518,45 @@ export class Game extends Scene {
 
   private layout(width: number, height: number) {
     this.cameras.resize(width, height);
+    this.drawBackground(width, height);
     if (!this.boardContainer) return;
 
-    const scaleFactor = Math.min(width / DESIGN_W, height / DESIGN_H, 1.4);
+    // If the aspect ratio has crossed the stacked/side-by-side threshold
+    // since the board was built — including if the very first build ran
+    // before Phaser's container reported its true final size — rebuild the
+    // board in the correct mode. Rebuilt from LIVE game state (current
+    // cellStates/fleetSunk/bombsUsed), not the original fetch snapshot, so
+    // any bombs already placed this session aren't lost.
+    const wantStacked = height > width;
+    if (wantStacked !== this.stacked) {
+      const liveData: GetDailyPuzzleResponse = {
+        dateKey: this.lastPuzzleData?.dateKey ?? '',
+        fleet: this.fleet,
+        bombsMax: this.bombsMax,
+        bombsUsed: this.bombsUsed,
+        cellStates: this.cellStates,
+        sunkShipIds: Array.from(this.fleetSunk),
+        gameOver: this.gameOver,
+        won: this.won,
+      };
+      this.boardContainer.destroy();
+      this.boardContainer = null;
+      this.cellRects = [];
+      this.fleetBlocks = [];
+      this.fleetLabels = [];
+      this.buildBoard(liveData, true); // instant = skip entrance animation on rebuild
+      return; // buildBoard() calls layout() again at its end with the new mode
+    }
+
+    const PADDING = 28;
+    const availW = Math.max(width - PADDING * 2, 1);
+    const availH = Math.max(height - PADDING * 2, 1);
+
+    const scaleFactor = Math.min(availW / this.designW, availH / this.designH, 1.15);
     this.boardContainer.setScale(scaleFactor);
     this.boardContainer.setPosition(
-      width / 2 - (DESIGN_W * scaleFactor) / 2,
-      height / 2 - (DESIGN_H * scaleFactor) / 2
+      width / 2 - (this.designW * scaleFactor) / 2,
+      height / 2 - (this.designH * scaleFactor) / 2
     );
   }
 }

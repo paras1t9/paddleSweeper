@@ -123,34 +123,23 @@ body.app {
 
 .fleet-preview {
   display: flex;
-  gap: 4px;
+  gap: 10px;
+  align-items: flex-end;
   margin-bottom: 28px;
 }
 
-.ship {
-  height: 14px;
+.ship-icon {
+  display: grid;
+  grid-template-columns: repeat(3, 9px);
+  grid-template-rows: repeat(4, 9px);
+  gap: 2px;
+}
+
+.blk {
+  width: 9px;
+  height: 9px;
   background: var(--navy-panel);
-  border: 1px solid var(--radar-dim);
-}
-
-.ship-5 {
-  width: 46px;
-}
-
-.ship-4 {
-  width: 38px;
-}
-
-.ship-3 {
-  width: 30px;
-}
-
-.ship-2 {
-  width: 22px;
-}
-
-.ship-1 {
-  width: 14px;
+  border: 1px solid var(--radar-green);
 }
 
 .start-button {

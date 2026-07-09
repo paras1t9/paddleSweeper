@@ -16,6 +16,7 @@ import {
   resolveBomb,
   MAX_BOMBS,
   toFleetManifest,
+  FLEET_VERSION,
 } from '../core/puzzle';
 
 type ErrorResponse = {
@@ -113,10 +114,13 @@ api.post('/decrement', async (c) => {
 // =========================================================================
 
 // ---- Redis key helpers ----
-const puzzleKey = (dateKey: string) => `daily-battles:puzzle:${dateKey}`;
+// FLEET_VERSION is baked in here — bump it in puzzle.ts whenever ship
+// shapes/sizes/rules change, and old cached puzzles/sessions become
+// orphaned (harmless, just ignored) instead of silently served stale.
+const puzzleKey = (dateKey: string) => `daily-battles:v${FLEET_VERSION}:puzzle:${dateKey}`;
 const sessionKey = (dateKey: string, username: string) =>
-  `daily-battles:session:${dateKey}:${username}`;
-const leaderboardKey = (dateKey: string) => `daily-battles:leaderboard:${dateKey}`;
+  `daily-battles:v${FLEET_VERSION}:session:${dateKey}:${username}`;
+const leaderboardKey = (dateKey: string) => `daily-battles:v${FLEET_VERSION}:leaderboard:${dateKey}`;
 
 type CellState = 'idle' | 'miss' | 'hit' | 'sunk';
 
