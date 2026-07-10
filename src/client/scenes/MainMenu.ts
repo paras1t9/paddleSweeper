@@ -1,5 +1,6 @@
 import { Scene } from 'phaser';
 import * as Phaser from 'phaser';
+import { audioManager } from '../audio';
 
 const COLORS = {
   navyDeep: 0x0a1628,
@@ -35,6 +36,7 @@ export class MainMenu extends Scene {
     this.scale.on('resize', () => this.refreshLayout());
 
     this.input.once('pointerdown', () => {
+      void audioManager.ensureStarted();
       this.scene.start('Game');
     });
   }

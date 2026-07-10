@@ -6,12 +6,13 @@
 
 export const GRID_SIZE = 10;
 export const MAX_BOMBS = 32;
+export const MAX_HINTS = 6;
 
 // Bump this whenever fleet shapes, sizes, or grid rules change. It's baked
 // into the Redis keys in api.ts, so a version bump automatically invalidates
 // any previously-cached puzzle/session instead of silently serving stale
 // data generated under the old rules.
-export const FLEET_VERSION = 2;
+export const FLEET_VERSION = 3;
 
 export type Cell = { r: number; c: number };
 export type Offset = { dr: number; dc: number };
@@ -101,9 +102,9 @@ export type ShipPlacement = {
 };
 
 export type DailyPuzzle = {
-  dateKey: string;          // e.g. "2026-07-06"
+  dateKey: string; // e.g. "2026-07-06"
   seed: number;
-  occupied: number[][];     // GRID_SIZE x GRID_SIZE, -1 or shipId
+  occupied: number[][]; // GRID_SIZE x GRID_SIZE, -1 or shipId
   ships: ShipPlacement[];
 };
 
@@ -291,4 +292,33 @@ export function resolveBomb(
     return { result: 'sunk', shipId, sunkShipCells: ship.cells };
   }
   return { result: 'hit', shipId };
+}
+
+// Picks a random cell belonging to a ship that hasn't been hit yet — a
+// guaranteed hit, for the hint system. Returns null if every ship cell has
+// already been found (nothing left to hint). Not deterministic/seeded on
+// purpose: a hint is a one-off per-player event, not part of the shared
+// daily puzzle, so plain randomness is fine here.
+export function getHintCell(
+  puzzle: DailyPuzzle,
+  hitsSoFar: Set<string>
+): Cell | null {
+  const candidates: Cell[] = [];
+  for (let r = 0; r < GRID_SIZE; r++) {
+    const row = puzzle.occupied[r];
+    if (row === undefined) continue;
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const shipId = row[c];
+      if (
+        shipId !== undefined &&
+        shipId !== -1 &&
+        !hitsSoFar.has(`${r},${c}`)
+      ) {
+        candidates.push({ r, c });
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+  const idx = Math.floor(Math.random() * candidates.length);
+  return candidates[idx] ?? null;
 }

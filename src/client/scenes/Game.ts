@@ -1,16 +1,18 @@
 import { Scene } from 'phaser';
 import * as Phaser from 'phaser';
+import { audioManager } from '../audio';
 import type {
   GetDailyPuzzleResponse,
   BombRequest,
   BombResponse,
+  HintResponse,
   FleetManifestEntry,
 } from '../../shared/api';
 
 const GRID_SIZE = 10;
 const CELL = 36;
 const GRID_PX = GRID_SIZE * CELL;
-const HEADER_H = 44;
+const HEADER_H = 58;
 const MESSAGE_H = 30;
 const FLEET_BLOCK_PX = 13;
 const FLEET_ENTRY_W_SIDE = 85;
@@ -28,7 +30,14 @@ const SIDE_DESIGN_H = HEADER_H + GRID_PX + MESSAGE_H + 20;
 // shrinking to illegibility on a phone screen.
 const STACK_DESIGN_W = GRID_PX + 20;
 const STACK_FLEET_GAP = 26;
-const STACK_DESIGN_H = HEADER_H + GRID_PX + STACK_FLEET_GAP + 20 + FLEET_ENTRY_H * 2 + MESSAGE_H + 10;
+const STACK_DESIGN_H =
+  HEADER_H +
+  GRID_PX +
+  STACK_FLEET_GAP +
+  20 +
+  FLEET_ENTRY_H * 2 +
+  MESSAGE_H +
+  10;
 
 const COLORS = {
   cellIdle: 0x142c4a,
@@ -61,10 +70,15 @@ export class Game extends Scene {
 
   bombsMax = 32;
   bombsUsed = 0;
+  hintsMax = 6;
+  hintsUsed = 0;
+  score = 0;
   gameOver = false;
   won = false;
 
   bombCountText: Phaser.GameObjects.Text | null = null;
+  scoreText: Phaser.GameObjects.Text | null = null;
+  hintButton: Phaser.GameObjects.Text | null = null;
   messageText: Phaser.GameObjects.Text | null = null;
   scanline: Phaser.GameObjects.Rectangle | null = null;
   lastPuzzleData: GetDailyPuzzleResponse | null = null;
@@ -87,9 +101,14 @@ export class Game extends Scene {
     this.designH = SIDE_DESIGN_H;
     this.bombsMax = 32;
     this.bombsUsed = 0;
+    this.hintsMax = 6;
+    this.hintsUsed = 0;
+    this.score = 0;
     this.gameOver = false;
     this.won = false;
     this.bombCountText = null;
+    this.scoreText = null;
+    this.hintButton = null;
     this.messageText = null;
     this.scanline = null;
     this.lastPuzzleData = null;
@@ -98,16 +117,22 @@ export class Game extends Scene {
   create() {
     this.camera = this.cameras.main;
     this.camera.setBackgroundColor(0x0a1628);
+    audioManager.duck();
 
     this.bgGraphics = this.add.graphics();
     this.drawBackground(this.scale.width, this.scale.height);
 
     const loadingText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, 'Loading today\'s puzzle...', {
-        fontFamily: 'Courier New',
-        fontSize: 18,
-        color: '#6f8394',
-      })
+      .text(
+        this.scale.width / 2,
+        this.scale.height / 2,
+        "Loading today's puzzle...",
+        {
+          fontFamily: 'Courier New',
+          fontSize: 18,
+          color: '#6f8394',
+        }
+      )
       .setOrigin(0.5);
 
     void this.loadPuzzle(loadingText);
@@ -154,6 +179,9 @@ export class Game extends Scene {
     this.fleet = data.fleet;
     this.bombsMax = data.bombsMax;
     this.bombsUsed = data.bombsUsed;
+    this.hintsMax = data.hintsMax;
+    this.hintsUsed = data.hintsUsed;
+    this.score = data.score;
     this.gameOver = data.gameOver;
     this.won = data.won;
     this.fleetSunk = new Set(data.sunkShipIds);
@@ -176,11 +204,22 @@ export class Game extends Scene {
     const frame = this.add.graphics();
     const framePad = 14;
     frame.lineStyle(1, COLORS.radarGreen, 0.35);
-    frame.strokeRect(-framePad, -framePad, this.designW + framePad * 2, this.designH + framePad * 2);
-    this.drawCornerTicks(frame, -framePad, -framePad, this.designW + framePad * 2, this.designH + framePad * 2);
+    frame.strokeRect(
+      -framePad,
+      -framePad,
+      this.designW + framePad * 2,
+      this.designH + framePad * 2
+    );
+    this.drawCornerTicks(
+      frame,
+      -framePad,
+      -framePad,
+      this.designW + framePad * 2,
+      this.designH + framePad * 2
+    );
     container.add(frame);
 
-    // ---- Header ----
+    // ---- Header, row 1: title + live score ----
     const header = this.add.text(0, 0, 'DAILY BATTLES', {
       fontFamily: 'Courier New',
       fontSize: 20,
@@ -189,12 +228,50 @@ export class Game extends Scene {
     });
     container.add(header);
 
-    this.bombCountText = this.add.text(this.designW - 100, 4, `BOMBS: ${this.bombsMax - this.bombsUsed}`, {
-      fontFamily: 'Courier New',
-      fontSize: 14,
-      color: '#d4a94a',
-    });
+    this.scoreText = this.add
+      .text(this.designW, 2, `SCORE: ${this.score}`, {
+        fontFamily: 'Courier New',
+        fontSize: 15,
+        color: '#d4a94a',
+        fontStyle: 'bold',
+      })
+      .setOrigin(1, 0);
+    container.add(this.scoreText);
+
+    // ---- Header, row 2: bombs left + hint button ----
+    this.bombCountText = this.add.text(
+      0,
+      27,
+      `BOMBS: ${this.bombsMax - this.bombsUsed}`,
+      {
+        fontFamily: 'Courier New',
+        fontSize: 13,
+        color: '#6f8394',
+      }
+    );
     container.add(this.bombCountText);
+
+    const hintsLeft = this.hintsMax - this.hintsUsed;
+    this.hintButton = this.add
+      .text(this.designW, 24, `HINT (${hintsLeft})`, {
+        fontFamily: 'Courier New',
+        fontSize: 12,
+        color: '#3ddc97',
+        backgroundColor: '#10233d',
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(1, 0);
+    container.add(this.hintButton);
+    this.refreshHintButton();
+    this.hintButton.on('pointerover', () => {
+      if (this.hintsMax - this.hintsUsed > 0 && !this.gameOver) {
+        this.hintButton?.setStyle({ backgroundColor: '#1c3d61' });
+      }
+    });
+    this.hintButton.on('pointerout', () =>
+      this.hintButton?.setStyle({ backgroundColor: '#10233d' })
+    );
+    this.hintButton.on('pointerdown', () => void this.fireHint());
 
     const gridOriginY = HEADER_H;
 
@@ -246,7 +323,14 @@ export class Game extends Scene {
 
     // Slow scanline sweep down the grid — decorative, matches the sonar
     // language from the splash and main menu.
-    const scanline = this.add.rectangle(GRID_PX / 2, gridOriginY, GRID_PX, 2, COLORS.radarGreen, 0.25);
+    const scanline = this.add.rectangle(
+      GRID_PX / 2,
+      gridOriginY,
+      GRID_PX,
+      2,
+      COLORS.radarGreen,
+      0.25
+    );
     container.add(scanline);
     this.scanline = scanline;
     this.tweens.add({
@@ -259,7 +343,9 @@ export class Game extends Scene {
     });
 
     // ---- Fleet panel ----
-    const fleetTitleY = this.stacked ? gridOriginY + GRID_PX + STACK_FLEET_GAP : gridOriginY - 20;
+    const fleetTitleY = this.stacked
+      ? gridOriginY + GRID_PX + STACK_FLEET_GAP
+      : gridOriginY - 20;
     const fleetTitleX = this.stacked ? 0 : GRID_PX + SIDE_PANEL_GAP;
     const fleetTitle = this.add.text(fleetTitleX, fleetTitleY, 'ENEMY FLEET', {
       fontFamily: 'Courier New',
@@ -283,7 +369,9 @@ export class Game extends Scene {
 
     // ---- Message line ----
     const messageY = this.stacked
-      ? fleetOriginY + Math.ceil(this.fleet.length / fleetCols) * FLEET_ENTRY_H + 6
+      ? fleetOriginY +
+        Math.ceil(this.fleet.length / fleetCols) * FLEET_ENTRY_H +
+        6
       : gridOriginY + GRID_PX + 10;
     this.messageText = this.add.text(0, messageY, '', {
       fontFamily: 'Courier New',
@@ -299,7 +387,13 @@ export class Game extends Scene {
     this.layout(this.scale.width, this.scale.height);
   }
 
-  private drawCornerTicks(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number) {
+  private drawCornerTicks(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ) {
     const len = 12;
     g.lineStyle(2, COLORS.brass, 0.8);
     // top-left
@@ -325,11 +419,16 @@ export class Game extends Scene {
     instant: boolean
   ) {
     const sunk = this.fleetSunk.has(ship.id);
-    const label = this.add.text(x, y, sunk ? `${ship.name} \u2713` : ship.name, {
-      fontFamily: 'Courier New',
-      fontSize: 10,
-      color: sunk ? '#d4a94a' : '#6f8394',
-    });
+    const label = this.add.text(
+      x,
+      y,
+      sunk ? `${ship.name} \u2713` : ship.name,
+      {
+        fontFamily: 'Courier New',
+        fontSize: 10,
+        color: sunk ? '#d4a94a' : '#6f8394',
+      }
+    );
     container.add(label);
     this.fleetLabels[ship.id] = label;
 
@@ -355,7 +454,10 @@ export class Game extends Scene {
       return;
     }
 
-    const rowTargets: (Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle)[] = [label, ...blocks];
+    const rowTargets: (
+      | Phaser.GameObjects.Text
+      | Phaser.GameObjects.Rectangle
+    )[] = [label, ...blocks];
     rowTargets.forEach((t) => t.setAlpha(0));
     this.tweens.add({
       targets: rowTargets,
@@ -366,7 +468,10 @@ export class Game extends Scene {
     });
   }
 
-  private applyCellVisual(rect: Phaser.GameObjects.Rectangle, state: CellState) {
+  private applyCellVisual(
+    rect: Phaser.GameObjects.Rectangle,
+    state: CellState
+  ) {
     if (state === 'miss') {
       rect.setFillStyle(COLORS.cellMiss);
       rect.setStrokeStyle(1, 0x2a3f52);
@@ -376,6 +481,63 @@ export class Game extends Scene {
       rect.setFillStyle(COLORS.brass);
       rect.setStrokeStyle(1, 0xffe6b0);
     }
+  }
+
+  // Shared by fireBomb() and fireHint() — a hint reveal and a bomb hit look
+  // and behave identically once the server has told us which cell it is;
+  // the only difference is which endpoint produced it and whether it cost
+  // a bomb, both handled by the caller.
+  private applyHitOrSunk(
+    r: number,
+    c: number,
+    sunk: boolean,
+    shipId?: number,
+    sunkShipCells?: { r: number; c: number }[]
+  ) {
+    const row = this.cellStates[r];
+    if (row) row[c] = sunk ? 'sunk' : 'hit';
+
+    const rect = this.cellRects[r]?.[c];
+    if (rect) this.applyCellVisual(rect, sunk ? 'sunk' : 'hit');
+
+    if (sunk && shipId !== undefined) {
+      sunkShipCells?.forEach(({ r: sr, c: sc }) => {
+        const shipRow = this.cellStates[sr];
+        if (shipRow) shipRow[sc] = 'sunk';
+        const shipRect = this.cellRects[sr]?.[sc];
+        if (shipRect) this.applyCellVisual(shipRect, 'sunk');
+      });
+      this.sinkShipVisual(shipId, sunkShipCells ?? []);
+      audioManager.playSunk();
+    } else {
+      this.spawnHitFlash(r, c);
+      audioManager.playHit();
+    }
+  }
+
+  private refreshHintButton() {
+    if (!this.hintButton) return;
+    const hintsLeft = this.hintsMax - this.hintsUsed;
+    this.hintButton.setText(`HINT (${hintsLeft})`);
+    if (hintsLeft <= 0 || this.gameOver) {
+      this.hintButton.disableInteractive();
+      this.hintButton.setStyle({ color: '#3f4f5c' });
+    } else {
+      this.hintButton.setInteractive({ useHandCursor: true });
+      this.hintButton.setStyle({ color: '#3ddc97' });
+    }
+  }
+
+  private goToGameOver() {
+    this.time.delayedCall(700, () => {
+      this.scene.start('GameOver', {
+        won: this.won,
+        bombsUsed: this.bombsUsed,
+        bombsMax: this.bombsMax,
+        hintsUsed: this.hintsUsed,
+        score: this.score,
+      });
+    });
   }
 
   private async fireBomb(r: number, c: number) {
@@ -392,46 +554,71 @@ export class Game extends Scene {
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const result = (await response.json()) as BombResponse;
 
-      if (result.result === 'already-bombed' || result.result === 'no-bombs-left') {
+      if (
+        result.result === 'already-bombed' ||
+        result.result === 'no-bombs-left'
+      ) {
         return;
       }
 
-      const row = this.cellStates[r];
-      if (row) row[c] = result.result === 'sunk' ? 'sunk' : (result.result as CellState);
-
-      const rect = this.cellRects[r]?.[c];
-      if (rect) this.applyCellVisual(rect, result.result === 'sunk' ? 'sunk' : (result.result as CellState));
-
       if (result.result === 'miss') {
         this.spawnMissMark(r, c);
+        audioManager.playMiss();
       } else if (result.result === 'hit') {
-        this.spawnHitFlash(r, c);
-      } else if (result.result === 'sunk' && result.shipId !== undefined) {
-        result.sunkShipCells?.forEach(({ r: sr, c: sc }: { r: number; c: number }) => {
-          const shipRow = this.cellStates[sr];
-          if (shipRow) shipRow[sc] = 'sunk';
-          const shipRect = this.cellRects[sr]?.[sc];
-          if (shipRect) this.applyCellVisual(shipRect, 'sunk');
-        });
-        this.sinkShipVisual(result.shipId, result.sunkShipCells ?? []);
+        this.applyHitOrSunk(r, c, false);
+      } else if (result.result === 'sunk') {
+        this.applyHitOrSunk(r, c, true, result.shipId, result.sunkShipCells);
       }
 
       this.bombsUsed = result.bombsUsed;
+      this.score = result.score;
       this.bombCountText?.setText(`BOMBS: ${result.bombsLeft}`);
+      this.scoreText?.setText(`SCORE: ${this.score}`);
 
       if (result.gameOver) {
         this.gameOver = true;
         this.won = result.won;
-        this.time.delayedCall(700, () => {
-          this.scene.start('GameOver', {
-            won: this.won,
-            bombsUsed: this.bombsUsed,
-            bombsMax: this.bombsMax,
-          });
-        });
+        this.refreshHintButton();
+        this.goToGameOver();
       }
     } catch (error) {
       console.error('Failed to resolve bomb:', error);
+    }
+  }
+
+  private async fireHint() {
+    if (this.gameOver) return;
+    if (this.hintsMax - this.hintsUsed <= 0) return;
+
+    try {
+      const response = await fetch('/api/hint', { method: 'POST' });
+      if (!response.ok) throw new Error(`API error: ${response.status}`);
+      const result = (await response.json()) as HintResponse;
+
+      this.hintsUsed = result.hintsUsed;
+      this.score = result.score;
+      this.scoreText?.setText(`SCORE: ${this.score}`);
+      this.refreshHintButton();
+
+      if (result.cell) {
+        audioManager.playHint();
+        this.applyHitOrSunk(
+          result.cell.r,
+          result.cell.c,
+          result.sunk,
+          result.shipId,
+          result.sunkShipCells
+        );
+      }
+
+      if (result.gameOver) {
+        this.gameOver = true;
+        this.won = result.won;
+        this.refreshHintButton();
+        this.goToGameOver();
+      }
+    } catch (error) {
+      console.error('Failed to resolve hint:', error);
     }
   }
 
@@ -448,7 +635,9 @@ export class Game extends Scene {
     if (!this.boardContainer) return;
     const x = c * CELL + CELL / 2;
     const y = HEADER_H + r * CELL + CELL / 2;
-    const ring = this.add.circle(x, y, 4, 0xffffff, 0).setStrokeStyle(2, 0xffe6b0);
+    const ring = this.add
+      .circle(x, y, 4, 0xffffff, 0)
+      .setStrokeStyle(2, 0xffe6b0);
     this.boardContainer.add(ring);
     this.tweens.addCounter({
       from: 4,
@@ -473,7 +662,9 @@ export class Game extends Scene {
       for (let i = 0; i < 3; i++) {
         this.time.delayedCall(i * 150, () => {
           if (!this.boardContainer) return;
-          const ring = this.add.circle(x, y, 6, 0xffffff, 0).setStrokeStyle(2, COLORS.brass);
+          const ring = this.add
+            .circle(x, y, 6, 0xffffff, 0)
+            .setStrokeStyle(2, COLORS.brass);
           this.boardContainer.add(ring);
           this.tweens.addCounter({
             from: 6,
@@ -508,10 +699,14 @@ export class Game extends Scene {
   private showAlreadyFinished() {
     if (!this.messageText) return;
     if (this.won) {
-      this.messageText.setText(`Already solved today in ${this.bombsUsed} bombs. Come back tomorrow!`);
+      this.messageText.setText(
+        `Already solved today — score ${this.score}. Come back tomorrow!`
+      );
       this.messageText.setColor('#3ddc97');
     } else {
-      this.messageText.setText(`Out of bombs for today. Come back tomorrow!`);
+      this.messageText.setText(
+        `Out of bombs for today — score ${this.score}. Come back tomorrow!`
+      );
       this.messageText.setColor('#d8544a');
     }
   }
@@ -534,6 +729,9 @@ export class Game extends Scene {
         fleet: this.fleet,
         bombsMax: this.bombsMax,
         bombsUsed: this.bombsUsed,
+        hintsMax: this.hintsMax,
+        hintsUsed: this.hintsUsed,
+        score: this.score,
         cellStates: this.cellStates,
         sunkShipIds: Array.from(this.fleetSunk),
         gameOver: this.gameOver,
@@ -552,7 +750,11 @@ export class Game extends Scene {
     const availW = Math.max(width - PADDING * 2, 1);
     const availH = Math.max(height - PADDING * 2, 1);
 
-    const scaleFactor = Math.min(availW / this.designW, availH / this.designH, 1.15);
+    const scaleFactor = Math.min(
+      availW / this.designW,
+      availH / this.designH,
+      1.15
+    );
     this.boardContainer.setScale(scaleFactor);
     this.boardContainer.setPosition(
       width / 2 - (this.designW * scaleFactor) / 2,
