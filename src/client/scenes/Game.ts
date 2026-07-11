@@ -7,6 +7,11 @@ import type {
   BombResponse,
   HintResponse,
   FleetManifestEntry,
+  StreakInfo,
+  RevealedShip,
+  PracticeStartResponse,
+  PracticeBombResponse,
+  PracticeHintResponse,
 } from '../../shared/api';
 
 const GRID_SIZE = 10;
@@ -48,9 +53,12 @@ const COLORS = {
   brass: 0xd4a94a,
   alertRed: 0xd8544a,
   fogDim: 0x6f8394,
+  revealedMiss: 0x2a3550,
+  revealedMissBorder: 0x6f8394,
 };
 
 type CellState = 'idle' | 'miss' | 'hit' | 'sunk';
+type GameSceneData = { practice?: boolean };
 
 export class Game extends Scene {
   camera: Phaser.Cameras.Scene2D.Camera;
@@ -68,11 +76,13 @@ export class Game extends Scene {
   designW = SIDE_DESIGN_W;
   designH = SIDE_DESIGN_H;
 
+  practiceMode = false;
   bombsMax = 32;
   bombsUsed = 0;
   hintsMax = 6;
   hintsUsed = 0;
   score = 0;
+  streak: StreakInfo = { currentStreak: 0, longestStreak: 0 };
   gameOver = false;
   won = false;
 
@@ -83,11 +93,19 @@ export class Game extends Scene {
   scanline: Phaser.GameObjects.Rectangle | null = null;
   lastPuzzleData: GetDailyPuzzleResponse | null = null;
 
+  // Optimistic "in flight" state — a cell/hint request that's been sent but
+  // hasn't heard back from the server yet. Purely a UX layer: it doesn't
+  // change game logic, just gives instant feedback on click instead of a
+  // dead pause while the network round-trip happens.
+  pendingCells: Set<string> = new Set();
+  pendingMarkers: Map<string, Phaser.GameObjects.Arc> = new Map();
+  hintPending = false;
+
   constructor() {
     super('Game');
   }
 
-  init(): void {
+  init(data?: GameSceneData): void {
     this.bgGraphics = null;
     this.boardContainer = null;
     this.cellRects = [];
@@ -99,11 +117,13 @@ export class Game extends Scene {
     this.stacked = false;
     this.designW = SIDE_DESIGN_W;
     this.designH = SIDE_DESIGN_H;
+    this.practiceMode = data?.practice ?? false;
     this.bombsMax = 32;
     this.bombsUsed = 0;
     this.hintsMax = 6;
     this.hintsUsed = 0;
     this.score = 0;
+    this.streak = { currentStreak: 0, longestStreak: 0 };
     this.gameOver = false;
     this.won = false;
     this.bombCountText = null;
@@ -112,6 +132,9 @@ export class Game extends Scene {
     this.messageText = null;
     this.scanline = null;
     this.lastPuzzleData = null;
+    this.pendingCells = new Set();
+    this.pendingMarkers = new Map();
+    this.hintPending = false;
   }
 
   create() {
@@ -161,11 +184,61 @@ export class Game extends Scene {
 
   private async loadPuzzle(loadingText: Phaser.GameObjects.Text) {
     try {
+      if (this.practiceMode) {
+        const response = await fetch('/api/practice/start', { method: 'POST' });
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
+        const data = (await response.json()) as PracticeStartResponse;
+        loadingText.destroy();
+
+        // Adapt into the same shape buildBoard() already knows how to render
+        // — practice reuses all the same board/silhouette/animation code,
+        // it just talks to different endpoints and never scores or streaks.
+        const adapted: GetDailyPuzzleResponse = {
+          dateKey: 'practice',
+          fleet: data.fleet,
+          bombsMax: data.bombsMax,
+          bombsUsed: 0,
+          hintsMax: data.hintsMax,
+          hintsUsed: 0,
+          score: 0,
+          cellStates: Array.from({ length: GRID_SIZE }, () =>
+            Array(GRID_SIZE).fill('idle')
+          ) as CellState[][],
+          sunkShipIds: [],
+          gameOver: false,
+          won: false,
+          streak: { currentStreak: 0, longestStreak: 0 },
+        };
+        this.lastPuzzleData = adapted;
+        this.buildBoard(adapted, false);
+        return;
+      }
+
       const response = await fetch('/api/daily-puzzle');
       if (!response.ok) throw new Error(`API error: ${response.status}`);
       const data = (await response.json()) as GetDailyPuzzleResponse;
 
       loadingText.destroy();
+
+      if (data.gameOver) {
+        // Already finished today's puzzle in an earlier session (or an
+        // earlier tab/visit). Go straight to the leaderboard/result screen
+        // instead of showing the board again — there's nothing left to
+        // interact with, and this way "come back and check the leaderboard"
+        // is one tap through the menu instead of a dead-end message.
+        this.scene.start('GameOver', {
+          won: data.won,
+          bombsUsed: data.bombsUsed,
+          bombsMax: data.bombsMax,
+          hintsUsed: data.hintsUsed,
+          score: data.score,
+          streak: data.streak,
+          practice: false,
+        });
+        return;
+      }
+
+      this.streak = data.streak;
       this.lastPuzzleData = data;
       this.buildBoard(data, false);
     } catch (error) {
@@ -191,8 +264,7 @@ export class Game extends Scene {
     // viewport (phone portrait) gets the stacked layout, which needs far
     // less width and so can render at a legible, crisp size instead of
     // shrinking everything to fit a side-by-side layout designed for
-    // desktop. Re-evaluated by layout() on resize/orientation change too —
-    // see rebuildForModeChange().
+    // desktop. Re-evaluated by layout() on resize/orientation change too.
     this.stacked = this.scale.height > this.scale.width;
     this.designW = this.stacked ? STACK_DESIGN_W : SIDE_DESIGN_W;
     this.designH = this.stacked ? STACK_DESIGN_H : SIDE_DESIGN_H;
@@ -220,21 +292,31 @@ export class Game extends Scene {
     container.add(frame);
 
     // ---- Header, row 1: title + live score ----
-    const header = this.add.text(0, 0, 'DAILY BATTLES', {
-      fontFamily: 'Courier New',
-      fontSize: 20,
-      color: '#3ddc97',
-      fontStyle: 'bold',
-    });
+    const header = this.add.text(
+      0,
+      0,
+      this.practiceMode ? 'PRACTICE MODE' : 'DAILY BATTLES',
+      {
+        fontFamily: 'Courier New',
+        fontSize: 20,
+        color: '#3ddc97',
+        fontStyle: 'bold',
+      }
+    );
     container.add(header);
 
     this.scoreText = this.add
-      .text(this.designW, 2, `SCORE: ${this.score}`, {
-        fontFamily: 'Courier New',
-        fontSize: 15,
-        color: '#d4a94a',
-        fontStyle: 'bold',
-      })
+      .text(
+        this.designW,
+        2,
+        this.practiceMode ? 'NOT SCORED' : `SCORE: ${this.score}`,
+        {
+          fontFamily: 'Courier New',
+          fontSize: 15,
+          color: '#d4a94a',
+          fontStyle: 'bold',
+        }
+      )
       .setOrigin(1, 0);
     container.add(this.scoreText);
 
@@ -285,7 +367,7 @@ export class Game extends Scene {
           .rectangle(x, y, CELL - 3, CELL - 3, COLORS.cellIdle)
           .setStrokeStyle(1, COLORS.gridLine);
 
-        this.applyCellVisual(rect, this.cellStates[r]?.[c] ?? 'idle');
+        this.applyCellVisual(rect, this.cellStates[r]?.[c] ?? 'idle', r, c);
 
         rect.on('pointerover', () => {
           if (this.cellStates[r]?.[c] === 'idle' && !this.gameOver) {
@@ -373,11 +455,15 @@ export class Game extends Scene {
         Math.ceil(this.fleet.length / fleetCols) * FLEET_ENTRY_H +
         6
       : gridOriginY + GRID_PX + 10;
-    this.messageText = this.add.text(0, messageY, '', {
-      fontFamily: 'Courier New',
-      fontSize: 13,
-      color: '#6f8394',
-    });
+    this.messageText = this.add
+      .text(this.designW / 2, messageY, '', {
+        fontFamily: 'Courier New',
+        fontSize: 13,
+        color: '#6f8394',
+        align: 'center',
+        wordWrap: { width: this.designW, useAdvancedWrap: true },
+      })
+      .setOrigin(0.5, 0);
     container.add(this.messageText);
 
     if (this.gameOver) {
@@ -468,19 +554,37 @@ export class Game extends Scene {
     });
   }
 
+  // Fill color is never the only signal — a small glyph is layered on top
+  // of hit/sunk cells too, so the board reads correctly for colorblind
+  // players who might not reliably distinguish the red/gold hue difference.
   private applyCellVisual(
     rect: Phaser.GameObjects.Rectangle,
-    state: CellState
+    state: CellState,
+    r: number,
+    c: number
   ) {
     if (state === 'miss') {
       rect.setFillStyle(COLORS.cellMiss);
       rect.setStrokeStyle(1, 0x2a3f52);
     } else if (state === 'hit') {
       rect.setFillStyle(COLORS.alertRed);
+      this.addGlyph(r, c, '\u25CF', '#3a0d0d');
     } else if (state === 'sunk') {
       rect.setFillStyle(COLORS.brass);
       rect.setStrokeStyle(1, 0xffe6b0);
+      this.addGlyph(r, c, '\u2715', '#4a3410');
     }
+  }
+
+  private addGlyph(r: number, c: number, symbol: string, color: string) {
+    if (!this.boardContainer) return;
+    const x = c * CELL + CELL / 2;
+    const y = HEADER_H + r * CELL + CELL / 2;
+    const glyph = this.add
+      .text(x, y, symbol, { fontFamily: 'Courier New', fontSize: 14 })
+      .setOrigin(0.5)
+      .setColor(color);
+    this.boardContainer.add(glyph);
   }
 
   // Shared by fireBomb() and fireHint() — a hint reveal and a bomb hit look
@@ -498,14 +602,14 @@ export class Game extends Scene {
     if (row) row[c] = sunk ? 'sunk' : 'hit';
 
     const rect = this.cellRects[r]?.[c];
-    if (rect) this.applyCellVisual(rect, sunk ? 'sunk' : 'hit');
+    if (rect) this.applyCellVisual(rect, sunk ? 'sunk' : 'hit', r, c);
 
     if (sunk && shipId !== undefined) {
       sunkShipCells?.forEach(({ r: sr, c: sc }) => {
         const shipRow = this.cellStates[sr];
         if (shipRow) shipRow[sc] = 'sunk';
         const shipRect = this.cellRects[sr]?.[sc];
-        if (shipRect) this.applyCellVisual(shipRect, 'sunk');
+        if (shipRect) this.applyCellVisual(shipRect, 'sunk', sr, sc);
       });
       this.sinkShipVisual(shipId, sunkShipCells ?? []);
       audioManager.playSunk();
@@ -528,31 +632,72 @@ export class Game extends Scene {
     }
   }
 
-  private goToGameOver() {
-    this.time.delayedCall(700, () => {
-      this.scene.start('GameOver', {
-        won: this.won,
-        bombsUsed: this.bombsUsed,
-        bombsMax: this.bombsMax,
-        hintsUsed: this.hintsUsed,
-        score: this.score,
-      });
+  private goToGameOverNow() {
+    this.scene.start('GameOver', {
+      won: this.won,
+      bombsUsed: this.bombsUsed,
+      bombsMax: this.bombsMax,
+      hintsUsed: this.hintsUsed,
+      score: this.score,
+      streak: this.streak,
+      practice: this.practiceMode,
     });
+  }
+
+  private goToGameOver() {
+    this.time.delayedCall(700, () => this.goToGameOverNow());
+  }
+
+  private spawnPendingMarker(
+    r: number,
+    c: number
+  ): Phaser.GameObjects.Arc | null {
+    if (!this.boardContainer) return null;
+    const x = c * CELL + CELL / 2;
+    const y = HEADER_H + r * CELL + CELL / 2;
+    const ring = this.add
+      .circle(x, y, 8, 0xffffff, 0)
+      .setStrokeStyle(2, COLORS.brass, 0.8);
+    this.boardContainer.add(ring);
+    this.tweens.add({
+      targets: ring,
+      alpha: { from: 0.9, to: 0.25 },
+      scale: { from: 0.8, to: 1.25 },
+      duration: 380,
+      yoyo: true,
+      repeat: -1,
+    });
+    return ring;
+  }
+
+  private clearPendingMarker(key: string) {
+    const marker = this.pendingMarkers.get(key);
+    marker?.destroy();
+    this.pendingMarkers.delete(key);
   }
 
   private async fireBomb(r: number, c: number) {
     if (this.gameOver) return;
     if (this.cellStates[r]?.[c] !== 'idle') return;
+    const key = `${r},${c}`;
+    if (this.pendingCells.has(key)) return; // already in flight, ignore repeat clicks
+
+    this.pendingCells.add(key);
+    const marker = this.spawnPendingMarker(r, c);
+    if (marker) this.pendingMarkers.set(key, marker);
 
     try {
+      const endpoint = this.practiceMode ? '/api/practice/bomb' : '/api/bomb';
       const body: BombRequest = { r, c };
-      const response = await fetch('/api/bomb', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!response.ok) throw new Error(`API error: ${response.status}`);
-      const result = (await response.json()) as BombResponse;
+      const result = (await response.json()) as
+        | BombResponse
+        | PracticeBombResponse;
 
       if (
         result.result === 'already-bombed' ||
@@ -570,35 +715,69 @@ export class Game extends Scene {
         this.applyHitOrSunk(r, c, true, result.shipId, result.sunkShipCells);
       }
 
-      this.bombsUsed = result.bombsUsed;
-      this.score = result.score;
+      // bombsMax - bombsLeft works identically for both response shapes,
+      // so this stays correct without needing to branch on which one it is.
+      this.bombsUsed = this.bombsMax - result.bombsLeft;
       this.bombCountText?.setText(`BOMBS: ${result.bombsLeft}`);
-      this.scoreText?.setText(`SCORE: ${this.score}`);
+
+      if ('score' in result) {
+        this.score = result.score;
+        this.streak = result.streak;
+        this.scoreText?.setText(`SCORE: ${this.score}`);
+      }
 
       if (result.gameOver) {
         this.gameOver = true;
         this.won = result.won;
         this.refreshHintButton();
-        this.goToGameOver();
+
+        if (
+          !this.practiceMode &&
+          !result.won &&
+          'revealedShips' in result &&
+          result.revealedShips
+        ) {
+          // This is the bomb that ended the round in a loss — show what was
+          // missed before cutting to the result screen, instead of just
+          // ending abruptly with no closure.
+          this.revealMissedShips(result.revealedShips);
+          this.time.delayedCall(2600, () => this.goToGameOverNow());
+        } else {
+          this.goToGameOver();
+        }
       }
     } catch (error) {
       console.error('Failed to resolve bomb:', error);
+    } finally {
+      this.pendingCells.delete(key);
+      this.clearPendingMarker(key);
     }
   }
 
   private async fireHint() {
     if (this.gameOver) return;
     if (this.hintsMax - this.hintsUsed <= 0) return;
+    if (this.hintPending) return; // already in flight, ignore repeat clicks
+
+    this.hintPending = true;
+    this.hintButton?.setText('...');
+    this.hintButton?.disableInteractive();
 
     try {
-      const response = await fetch('/api/hint', { method: 'POST' });
+      const endpoint = this.practiceMode ? '/api/practice/hint' : '/api/hint';
+      const response = await fetch(endpoint, { method: 'POST' });
       if (!response.ok) throw new Error(`API error: ${response.status}`);
-      const result = (await response.json()) as HintResponse;
+      const result = (await response.json()) as
+        | HintResponse
+        | PracticeHintResponse;
 
-      this.hintsUsed = result.hintsUsed;
-      this.score = result.score;
-      this.scoreText?.setText(`SCORE: ${this.score}`);
-      this.refreshHintButton();
+      this.hintsUsed = this.hintsMax - result.hintsLeft;
+
+      if ('score' in result) {
+        this.score = result.score;
+        this.streak = result.streak;
+        this.scoreText?.setText(`SCORE: ${this.score}`);
+      }
 
       if (result.cell) {
         audioManager.playHint();
@@ -614,12 +793,36 @@ export class Game extends Scene {
       if (result.gameOver) {
         this.gameOver = true;
         this.won = result.won;
-        this.refreshHintButton();
         this.goToGameOver();
       }
     } catch (error) {
       console.error('Failed to resolve hint:', error);
+    } finally {
+      this.hintPending = false;
+      this.refreshHintButton();
     }
+  }
+
+  // Called once, right when a live game ends in a loss — paints the ships
+  // that were never found so the round has closure instead of just cutting
+  // off abruptly. Purely visual, staggered ship-by-ship for a "reveal"
+  // beat rather than everything dumping in at once.
+  private revealMissedShips(ships: RevealedShip[]) {
+    if (!this.boardContainer) return;
+    ships.forEach((ship, shipIndex) => {
+      ship.cells.forEach((cell, cellIndex) => {
+        const rect = this.cellRects[cell.r]?.[cell.c];
+        if (!rect) return;
+        if (this.cellStates[cell.r]?.[cell.c] !== 'idle') return; // already hit — leave it as-is
+        const delay = shipIndex * 150 + cellIndex * 40;
+        this.time.delayedCall(delay, () => {
+          rect.setFillStyle(COLORS.revealedMiss);
+          rect.setStrokeStyle(1.5, COLORS.revealedMissBorder);
+          rect.setAlpha(0);
+          this.tweens.add({ targets: rect, alpha: 1, duration: 250 });
+        });
+      });
+    });
   }
 
   private spawnMissMark(r: number, c: number) {
@@ -736,6 +939,7 @@ export class Game extends Scene {
         sunkShipIds: Array.from(this.fleetSunk),
         gameOver: this.gameOver,
         won: this.won,
+        streak: this.streak,
       };
       this.boardContainer.destroy();
       this.boardContainer = null;
@@ -743,6 +947,20 @@ export class Game extends Scene {
       this.fleetBlocks = [];
       this.fleetLabels = [];
       this.buildBoard(liveData, true); // instant = skip entrance animation on rebuild
+
+      // Any bomb still in flight had its pulsing marker destroyed along with
+      // the old container — respawn it in the new one so it doesn't just
+      // silently vanish mid-request.
+      this.pendingMarkers.clear();
+      this.pendingCells.forEach((key) => {
+        const [rStr, cStr] = key.split(',');
+        const r = Number(rStr);
+        const cc = Number(cStr);
+        if (!Number.isNaN(r) && !Number.isNaN(cc)) {
+          const marker = this.spawnPendingMarker(r, cc);
+          if (marker) this.pendingMarkers.set(key, marker);
+        }
+      });
       return; // buildBoard() calls layout() again at its end with the new mode
     }
 

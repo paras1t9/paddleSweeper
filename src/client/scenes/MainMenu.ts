@@ -15,7 +15,8 @@ const MARK_RADIUS = 34; // fixed, in pixels — never scaled, stays crisp on any
 export class MainMenu extends Scene {
   markGraphics: Phaser.GameObjects.Graphics | null = null;
   title: Phaser.GameObjects.Text | null = null;
-  subtitle: Phaser.GameObjects.Text | null = null;
+  playButton: Phaser.GameObjects.Text | null = null;
+  practiceButton: Phaser.GameObjects.Text | null = null;
   sweepAngle = 0;
 
   constructor() {
@@ -25,7 +26,8 @@ export class MainMenu extends Scene {
   init(): void {
     this.markGraphics = null;
     this.title = null;
-    this.subtitle = null;
+    this.playButton = null;
+    this.practiceButton = null;
     this.sweepAngle = 0;
   }
 
@@ -35,14 +37,19 @@ export class MainMenu extends Scene {
 
     this.scale.on('resize', () => this.refreshLayout());
 
-    this.input.once('pointerdown', () => {
-      void audioManager.ensureStarted();
-      this.scene.start('Game');
-    });
+    // Best-effort: try starting music the moment this screen appears, in
+    // case the tap that got us here (on the splash screen, one document
+    // earlier) counts as a live enough user gesture in this context. This
+    // is genuinely not guaranteed — browser autoplay policy is scoped per
+    // document, and this is a separate page load from the splash. If it's
+    // blocked, ensureStarted() safely leaves itself retryable rather than
+    // getting stuck, and both buttons below also call it as a guaranteed
+    // fallback.
+    void audioManager.ensureStarted();
   }
 
   // Standard Phaser per-frame hook — replaces the manual setInterval-style
-  // timer from the previous version, which was unnecessary and a possible
+  // timer from an earlier version, which was unnecessary and a possible
   // source of leftover callbacks across scene restarts.
   override update(_time: number, delta: number) {
     this.sweepAngle = (this.sweepAngle + delta * 0.12) % 360;
@@ -54,13 +61,14 @@ export class MainMenu extends Scene {
     this.cameras.resize(width, height);
 
     const centerX = width / 2;
-    const markY = Math.max(height * 0.38, MARK_RADIUS + 20);
+    const markY = Math.max(height * 0.34, MARK_RADIUS + 20);
 
     if (!this.markGraphics) {
       this.markGraphics = this.add.graphics();
     }
     // Fixed scale of 1 — position only, never shrink. This is what was
-    // causing both the tiny size and the blur.
+    // causing both the tiny size and the blur, back when this scaled with
+    // a 1024x768 reference like a full desktop layout.
     this.markGraphics.setPosition(centerX, markY);
     this.markGraphics.setScale(1);
     this.drawMark();
@@ -77,16 +85,53 @@ export class MainMenu extends Scene {
     }
     this.title.setPosition(centerX, markY + 68);
 
-    if (!this.subtitle) {
-      this.subtitle = this.add
-        .text(0, 0, 'Tap anywhere to deploy', {
+    if (!this.playButton) {
+      this.playButton = this.add
+        .text(0, 0, "PLAY TODAY'S PUZZLE", {
           fontFamily: 'Courier New',
           fontSize: '15px',
+          color: '#3ddc97',
+          backgroundColor: '#10233d',
+          padding: { x: 18, y: 10 },
+        })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+
+      this.playButton.on('pointerover', () =>
+        this.playButton?.setStyle({ backgroundColor: '#1c3d61' })
+      );
+      this.playButton.on('pointerout', () =>
+        this.playButton?.setStyle({ backgroundColor: '#10233d' })
+      );
+      this.playButton.on('pointerdown', () => {
+        void audioManager.ensureStarted();
+        this.scene.start('Game', { practice: false });
+      });
+    }
+    this.playButton.setPosition(centerX, markY + 112);
+
+    if (!this.practiceButton) {
+      this.practiceButton = this.add
+        .text(0, 0, 'Practice Mode (unlimited, not scored)', {
+          fontFamily: 'Courier New',
+          fontSize: '12px',
           color: '#6f8394',
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+
+      this.practiceButton.on('pointerover', () =>
+        this.practiceButton?.setColor('#3ddc97')
+      );
+      this.practiceButton.on('pointerout', () =>
+        this.practiceButton?.setColor('#6f8394')
+      );
+      this.practiceButton.on('pointerdown', () => {
+        void audioManager.ensureStarted();
+        this.scene.start('Game', { practice: true });
+      });
     }
-    this.subtitle.setPosition(centerX, markY + 100);
+    this.practiceButton.setPosition(centerX, markY + 154);
   }
 
   private drawMark(): void {

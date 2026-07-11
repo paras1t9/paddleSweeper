@@ -49,6 +49,14 @@ export function computeScore(
   return Math.max(0, shipScore - hintsUsed * HINT_PENALTY);
 }
 
+// Streak info — persists across days, independent of any single day's
+// puzzle. Included in every response that can end a game, plus the initial
+// load, so the client always has a current view of it.
+export type StreakInfo = {
+  currentStreak: number;
+  longestStreak: number;
+};
+
 // GET /api/daily-puzzle
 export type GetDailyPuzzleResponse = {
   dateKey: string;
@@ -62,12 +70,19 @@ export type GetDailyPuzzleResponse = {
   sunkShipIds: number[];
   gameOver: boolean;
   won: boolean;
+  streak: StreakInfo;
 };
 
 // POST /api/bomb
 export type BombRequest = {
   r: number;
   c: number;
+};
+
+export type RevealedShip = {
+  id: number;
+  name: string;
+  cells: { r: number; c: number }[];
 };
 
 export type BombResponse = {
@@ -81,6 +96,11 @@ export type BombResponse = {
   score: number;
   gameOver: boolean;
   won: boolean;
+  streak: StreakInfo;
+  // Populated only when this response is the one that ends the game in a
+  // loss (gameOver && !won) — the ships that were never found, so the
+  // client can show what was missed instead of just ending abruptly.
+  revealedShips?: RevealedShip[];
 };
 
 // POST /api/hint — no request body needed
@@ -94,6 +114,7 @@ export type HintResponse = {
   score: number;
   gameOver: boolean;
   won: boolean;
+  streak: StreakInfo;
 };
 
 // GET /api/leaderboard
@@ -109,4 +130,50 @@ export type GetLeaderboardResponse = {
   dateKey: string;
   entries: LeaderboardEntry[]; // sorted by score descending, bombsUsed ascending as tiebreak
   myRank?: number;
+};
+
+// POST /api/share-result — no request body needed, uses the caller's own
+// finished session
+export type ShareResultResponse = {
+  status: 'ok' | 'error';
+  message?: string;
+};
+
+// ---- Practice mode ----
+// Same shapes as the real endpoints, deliberately kept separate rather than
+// reusing GetDailyPuzzleResponse/BombResponse/HintResponse — practice has no
+// streak, no leaderboard, no daily reset, and mixing those concerns into the
+// real types risked a real session accidentally picking up practice-only
+// fields (or vice versa).
+
+export type PracticeStartResponse = {
+  fleet: FleetManifestEntry[];
+  bombsMax: number;
+  hintsMax: number;
+};
+
+export type PracticeBombRequest = {
+  r: number;
+  c: number;
+};
+
+export type PracticeBombResponse = {
+  result: 'miss' | 'hit' | 'sunk' | 'already-bombed' | 'no-bombs-left';
+  r: number;
+  c: number;
+  shipId?: number;
+  sunkShipCells?: { r: number; c: number }[];
+  bombsLeft: number;
+  gameOver: boolean;
+  won: boolean;
+};
+
+export type PracticeHintResponse = {
+  cell: { r: number; c: number } | null;
+  shipId?: number;
+  sunk: boolean;
+  sunkShipCells?: { r: number; c: number }[];
+  hintsLeft: number;
+  gameOver: boolean;
+  won: boolean;
 };

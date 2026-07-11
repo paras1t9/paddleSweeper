@@ -1,91 +1,128 @@
 <!doctype html>
 <html lang="en">
+  <head>
+    <link rel="stylesheet" type="text/css" href="splash.css" />
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0"
+    />
+    <title>Daily Battles</title>
+  </head>
+  <body class="app">
+    <div class="grid-overlay" aria-hidden="true"></div>
 
-<head>
-  <link rel="stylesheet" type="text/css" href="splash.css" />
-  <meta charset="UTF-8" />
-  <meta name="viewport"
-    content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0" />
-  <title>Daily Battles</title>
-</head>
+    <button class="help-button" id="help-button" aria-label="How to play">?</button>
 
-<body class="app">
-  <div class="grid-overlay" aria-hidden="true"></div>
+    <div class="content">
+      <div class="badge" id="greeting"></div>
 
-  <div class="content">
-    <div class="badge" id="greeting"></div>
+      <div class="mark-wrap">
+        <div class="sweep" aria-hidden="true"></div>
+        <svg class="mark" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="28" cy="28" r="26" stroke="#3ddc97" stroke-width="1.5" opacity="0.5"/>
+          <circle cx="28" cy="28" r="18" stroke="#3ddc97" stroke-width="1" opacity="0.35"/>
+          <circle cx="28" cy="28" r="10" stroke="#3ddc97" stroke-width="1" opacity="0.25"/>
+          <line x1="28" y1="2" x2="28" y2="54" stroke="#1c5c47" stroke-width="1"/>
+          <line x1="2" y1="28" x2="54" y2="28" stroke="#1c5c47" stroke-width="1"/>
+          <circle cx="28" cy="28" r="3" fill="#d4a94a"/>
+        </svg>
+      </div>
 
-    <div class="mark-wrap">
-      <div class="sweep" aria-hidden="true"></div>
-      <svg class="mark" width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true">
-        <circle cx="28" cy="28" r="26" stroke="#3ddc97" stroke-width="1.5" opacity="0.5" />
-        <circle cx="28" cy="28" r="18" stroke="#3ddc97" stroke-width="1" opacity="0.35" />
-        <circle cx="28" cy="28" r="10" stroke="#3ddc97" stroke-width="1" opacity="0.25" />
-        <line x1="28" y1="2" x2="28" y2="54" stroke="#1c5c47" stroke-width="1" />
-        <line x1="2" y1="28" x2="54" y2="28" stroke="#1c5c47" stroke-width="1" />
-        <circle cx="28" cy="28" r="3" fill="#d4a94a" />
-      </svg>
+      <h1 class="title">DAILY BATTLES</h1>
+      <p class="tagline">One hidden fleet. Thirty bombs.<br />Same puzzle for everyone, every day.</p>
+
+      <div class="fleet-label">Today's Fleet</div>
+      <div class="fleet-preview" aria-hidden="true">
+        <!-- Carrier: L, 5 cells -->
+        <div class="ship-icon">
+          <span class="blk" style="grid-row:1;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:1"></span>
+          <span class="blk" style="grid-row:3;grid-column:1"></span>
+          <span class="blk" style="grid-row:4;grid-column:1"></span>
+          <span class="blk" style="grid-row:4;grid-column:2"></span>
+        </div>
+        <!-- Battleship: square, 4 cells -->
+        <div class="ship-icon">
+          <span class="blk" style="grid-row:1;grid-column:1"></span>
+          <span class="blk" style="grid-row:1;grid-column:2"></span>
+          <span class="blk" style="grid-row:2;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:2"></span>
+        </div>
+        <!-- Destroyer: Z, 4 cells -->
+        <div class="ship-icon">
+          <span class="blk" style="grid-row:1;grid-column:2"></span>
+          <span class="blk" style="grid-row:1;grid-column:3"></span>
+          <span class="blk" style="grid-row:2;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:2"></span>
+        </div>
+        <!-- Submarine: straight, 3 cells -->
+        <div class="ship-icon">
+          <span class="blk" style="grid-row:1;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:1"></span>
+          <span class="blk" style="grid-row:3;grid-column:1"></span>
+        </div>
+        <!-- Patrol Boat: corner, 3 cells -->
+        <div class="ship-icon">
+          <span class="blk" style="grid-row:1;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:2"></span>
+        </div>
+        <!-- Scout: domino, 2 cells -->
+        <div class="ship-icon">
+          <span class="blk" style="grid-row:1;grid-column:1"></span>
+          <span class="blk" style="grid-row:2;grid-column:1"></span>
+        </div>
+      </div>
+
+      <button class="start-button" id="start-button">Play Today's Puzzle</button>
     </div>
 
-    <h1 class="title">DAILY BATTLES</h1>
-    <p class="tagline">One hidden fleet. Thirty bombs.<br />Same puzzle for everyone, every day.</p>
+    <footer class="footer">
+      <div class="footer-link" tabindex="0" id="docs-link">Docs</div>
+      <span class="divider">&middot;</span>
+      <div class="footer-link" tabindex="0" id="playtest-link">r/Devvit</div>
+      <span class="divider">&middot;</span>
+      <div class="footer-link" tabindex="0" id="discord-link">Discord</div>
+    </footer>
 
-    <div class="fleet-label">Today's Fleet</div>
-    <div class="fleet-preview" aria-hidden="true">
-      <!-- Carrier: L, 5 cells -->
-      <div class="ship-icon">
-        <span class="blk" style="grid-row:1;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:1"></span>
-        <span class="blk" style="grid-row:3;grid-column:1"></span>
-        <span class="blk" style="grid-row:4;grid-column:1"></span>
-        <span class="blk" style="grid-row:4;grid-column:2"></span>
-      </div>
-      <!-- Battleship: square, 4 cells -->
-      <div class="ship-icon">
-        <span class="blk" style="grid-row:1;grid-column:1"></span>
-        <span class="blk" style="grid-row:1;grid-column:2"></span>
-        <span class="blk" style="grid-row:2;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:2"></span>
-      </div>
-      <!-- Destroyer: Z, 4 cells -->
-      <div class="ship-icon">
-        <span class="blk" style="grid-row:1;grid-column:2"></span>
-        <span class="blk" style="grid-row:1;grid-column:3"></span>
-        <span class="blk" style="grid-row:2;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:2"></span>
-      </div>
-      <!-- Submarine: straight, 3 cells -->
-      <div class="ship-icon">
-        <span class="blk" style="grid-row:1;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:1"></span>
-        <span class="blk" style="grid-row:3;grid-column:1"></span>
-      </div>
-      <!-- Patrol Boat: corner, 3 cells -->
-      <div class="ship-icon">
-        <span class="blk" style="grid-row:1;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:2"></span>
-      </div>
-      <!-- Scout: domino, 2 cells -->
-      <div class="ship-icon">
-        <span class="blk" style="grid-row:1;grid-column:1"></span>
-        <span class="blk" style="grid-row:2;grid-column:1"></span>
+    <div class="modal-overlay" id="help-overlay">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <button class="modal-close" id="help-close" aria-label="Close">&times;</button>
+        <h2 class="modal-title" id="help-title">HOW TO PLAY</h2>
+
+        <div class="modal-section">
+          <div class="modal-heading">The Idea</div>
+          <p>A hidden fleet of 6 ships is placed on a 10&times;10 grid — the same layout for every player, every day. Find and sink the whole fleet using as few bombs and hints as possible.</p>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-heading">The Fleet</div>
+          <p>Each ship has a real shape: Carrier (L), Battleship (square), Destroyer (Z), Submarine (straight), Patrol Boat (corner), and Scout (domino). You know the shapes going in, but never their position or rotation.</p>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-heading">Bombing</div>
+          <p>Tap a cell to bomb it. You get 30 bombs total. Each one is a miss, a hit, or the finishing blow that sinks a ship.</p>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-heading">Hints</div>
+          <p>Stuck? Use a hint to instantly reveal one cell of a ship you haven't found yet — it's free and doesn't cost a bomb. You get 6 hints per day, but each one used lowers your final score.</p>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-heading">Scoring</div>
+          <p>Bigger ships are worth more: 10 points per cell sunk (Carrier 50, Battleship/Destroyer 40, Submarine/Patrol Boat 30, Scout 20 — 210 total). Each hint used costs 15 points. Compare your score on the daily leaderboard.</p>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-heading">Every Day</div>
+          <p>New fleet, new layout, every day. Come back tomorrow for a fresh puzzle.</p>
+        </div>
       </div>
     </div>
 
-    <button class="start-button" id="start-button">Play Today's Puzzle</button>
-  </div>
-
-  <footer class="footer">
-    <div class="footer-link" tabindex="0" id="docs-link">Docs</div>
-    <span class="divider">&middot;</span>
-    <div class="footer-link" tabindex="0" id="playtest-link">r/Devvit</div>
-    <span class="divider">&middot;</span>
-    <div class="footer-link" tabindex="0" id="discord-link">Discord</div>
-  </footer>
-
-  <script type="module" src="splash.ts" defer></script>
-</body>
-
+    <script type="module" src="splash.ts" defer></script>
+  </body>
 </html>

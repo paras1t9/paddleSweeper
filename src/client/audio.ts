@@ -15,44 +15,64 @@ class AudioManager {
   private readonly NORMAL_VOLUME = 0.65;
   private readonly DUCKED_VOLUME = 0.42;
 
-  // Must be called from inside a real user gesture handler (click/tap) —
-  // browsers refuse to start audio otherwise. Safe to call more than once;
-  // only does anything the first time.
+  // Safe to call as many times as you like, from anywhere, gesture or not.
+  // Only ever creates the AudioContext/music loop once — but critically,
+  // only marks itself "started" once the context is confirmed genuinely
+  // running. Browsers silently refuse to actually start audio outside a
+  // real user gesture (a click/tap), so a speculative early call (e.g. from
+  // a scene's create()) commonly creates the context but leaves it stuck
+  // 'suspended' — that's fine and expected. A later call from inside a
+  // real gesture handler will then retry resume() and succeed.
   async ensureStarted(): Promise<void> {
     if (this.started) return;
-    this.started = true;
 
-    const AudioContextCtor =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
-    this.ctx = new AudioContextCtor();
-    if (this.ctx.state === 'suspended') {
-      await this.ctx.resume();
+    if (!this.ctx) {
+      const AudioContextCtor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      this.ctx = new AudioContextCtor();
+
+      this.master = this.ctx.createDynamicsCompressor();
+      this.master.threshold.value = -10;
+      this.master.knee.value = 18;
+      this.master.ratio.value = 5;
+      this.master.attack.value = 0.003;
+      this.master.release.value = 0.25;
+      this.master.connect(this.ctx.destination);
+
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.value = this.NORMAL_VOLUME;
+      this.musicGain.connect(this.master);
+
+      const loopBuffer = await this.renderMusicLoop(this.ctx);
+      const source = this.ctx.createBufferSource();
+      source.buffer = loopBuffer;
+      source.loop = true;
+      source.connect(this.musicGain);
+      source.start();
+      this.musicSource = source;
     }
 
-    // A shared limiter on the output — lets everything run louder without
-    // the louder moments (a sunk-ship boom landing on top of the music
-    // pulse) clipping or crackling.
-    this.master = this.ctx.createDynamicsCompressor();
-    this.master.threshold.value = -10;
-    this.master.knee.value = 18;
-    this.master.ratio.value = 5;
-    this.master.attack.value = 0.003;
-    this.master.release.value = 0.25;
-    this.master.connect(this.ctx.destination);
+    // Local const, not `this.ctx` — TypeScript drops narrowing of class
+    // properties across an `await`, since something else could reassign
+    // them in the meantime. This keeps the compiler (and the logic) honest.
+    const ctx = this.ctx;
+    if (!ctx) return;
 
-    this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = this.NORMAL_VOLUME;
-    this.musicGain.connect(this.master);
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch {
+        // Blocked because this wasn't a real user gesture — expected for a
+        // speculative early call. A later call from inside an actual
+        // click/tap handler will retry and succeed.
+      }
+    }
 
-    const loopBuffer = await this.renderMusicLoop(this.ctx);
-    const source = this.ctx.createBufferSource();
-    source.buffer = loopBuffer;
-    source.loop = true;
-    source.connect(this.musicGain);
-    source.start();
-    this.musicSource = source;
+    if (ctx.state === 'running') {
+      this.started = true;
+    }
   }
 
   // Called when the puzzle screen loads — lower the music so it sits behind
