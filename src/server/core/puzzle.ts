@@ -1,25 +1,12 @@
-// src/server/core/puzzle.ts
-//
-// Deterministic daily puzzle generation for Daily Battles.
-// Same date string -> same ship layout, for every player.
-// No Devvit imports here on purpose — pure logic, easy to unit test.
-
 export const GRID_SIZE = 10;
 export const MAX_BOMBS = 32;
 export const MAX_HINTS = 6;
 
-// Bump this whenever fleet shapes, sizes, or grid rules change. It's baked
-// into the Redis keys in api.ts, so a version bump automatically invalidates
-// any previously-cached puzzle/session instead of silently serving stale
-// data generated under the old rules.
 export const FLEET_VERSION = 3;
 
 export type Cell = { r: number; c: number };
 export type Offset = { dr: number; dc: number };
 
-// Canonical (unrotated) polyomino shapes. `cells` are offsets from a (0,0)
-// top-left corner. shapeName is just for the client to pick an icon/label —
-// gameplay logic only cares about the cell list.
 export type FleetShapeDef = {
   id: number;
   name: string;
@@ -102,14 +89,13 @@ export type ShipPlacement = {
 };
 
 export type DailyPuzzle = {
-  dateKey: string; // e.g. "2026-07-06"
+  dateKey: string;
   seed: number;
-  occupied: number[][]; // GRID_SIZE x GRID_SIZE, -1 or shipId
+  occupied: number[][];
   ships: ShipPlacement[];
 };
 
-// --- Deterministic RNG (mulberry32) ---
-// Same seed -> same sequence, every time, on any machine.
+// --- Deterministic RNG (mulberry32) ---.
 function mulberry32(seed: number) {
   let a = seed;
   return function () {
@@ -131,12 +117,8 @@ function seedFromDateKey(dateKey: string): number {
 }
 
 export function todayDateKey(): string {
-  // UTC, so "the daily puzzle" flips at a consistent time worldwide.
   return new Date().toISOString().slice(0, 10);
 }
-
-// Rotate a shape 90° clockwise, `times` times, then re-normalize so its
-// bounding box starts at (0,0) again — same shape, different orientation.
 function rotateCells(cells: Offset[], times: number): Offset[] {
   let result = cells;
   for (let t = 0; t < times; t++) {
@@ -207,8 +189,6 @@ export function generateDailyPuzzle(dateKey: string): DailyPuzzle {
     }
 
     if (!placed) {
-      // Extremely unlikely on a 10x10 grid with this fleet, but fail loudly
-      // rather than silently shipping a broken puzzle.
       throw new Error(
         `Failed to place ${shapeDef.name} for dateKey=${dateKey} after 3000 attempts`
       );
@@ -217,11 +197,6 @@ export function generateDailyPuzzle(dateKey: string): DailyPuzzle {
 
   return { dateKey, seed, occupied, ships };
 }
-
-// What the CLIENT is allowed to see before playing: each ship's identity and
-// canonical shape, but NOT today's actual rotation or position. Pulling
-// `cells` from FLEET_SHAPES (not from puzzle.ships[].cells) is deliberate —
-// the puzzle instance's cells are today's real secret placement.
 export type FleetManifestEntry = {
   id: number;
   size: number;
@@ -246,18 +221,17 @@ export function toFleetManifest(puzzle: DailyPuzzle): FleetManifestEntry[] {
   });
 }
 
-// Result of a single bomb, computed server-side against the real puzzle.
 export type BombOutcome = {
   result: 'miss' | 'hit' | 'sunk' | 'already-bombed';
   shipId?: number;
-  sunkShipCells?: Cell[]; // only populated on 'sunk', so client can reveal+animate
+  sunkShipCells?: Cell[];
 };
 
 export function resolveBomb(
   puzzle: DailyPuzzle,
   r: number,
   c: number,
-  hitsSoFar: Set<string> // "r,c" keys already bombed this session, from server-tracked state
+  hitsSoFar: Set<string>
 ): BombOutcome {
   const key = `${r},${c}`;
   if (hitsSoFar.has(key)) {
@@ -271,9 +245,6 @@ export function resolveBomb(
 
   const ship = puzzle.ships[shipId];
   if (ship === undefined) {
-    // shipId came straight out of occupied[][], which is only ever populated
-    // with valid indices into puzzle.ships during generation — this branch
-    // means the puzzle data itself is corrupt, not a normal game state.
     throw new Error(`Invalid shipId ${shipId} referenced in puzzle data`);
   }
 
@@ -293,12 +264,6 @@ export function resolveBomb(
   }
   return { result: 'hit', shipId };
 }
-
-// Picks a random cell belonging to a ship that hasn't been hit yet — a
-// guaranteed hit, for the hint system. Returns null if every ship cell has
-// already been found (nothing left to hint). Not deterministic/seeded on
-// purpose: a hint is a one-off per-player event, not part of the shared
-// daily puzzle, so plain randomness is fine here.
 export function getHintCell(
   puzzle: DailyPuzzle,
   hitsSoFar: Set<string>

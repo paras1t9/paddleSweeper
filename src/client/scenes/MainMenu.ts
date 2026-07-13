@@ -36,21 +36,9 @@ export class MainMenu extends Scene {
     this.refreshLayout();
 
     this.scale.on('resize', () => this.refreshLayout());
-
-    // Best-effort: try starting music the moment this screen appears, in
-    // case the tap that got us here (on the splash screen, one document
-    // earlier) counts as a live enough user gesture in this context. This
-    // is genuinely not guaranteed — browser autoplay policy is scoped per
-    // document, and this is a separate page load from the splash. If it's
-    // blocked, ensureStarted() safely leaves itself retryable rather than
-    // getting stuck, and both buttons below also call it as a guaranteed
-    // fallback.
     void audioManager.ensureStarted();
   }
 
-  // Standard Phaser per-frame hook — replaces the manual setInterval-style
-  // timer from an earlier version, which was unnecessary and a possible
-  // source of leftover callbacks across scene restarts.
   override update(_time: number, delta: number) {
     this.sweepAngle = (this.sweepAngle + delta * 0.12) % 360;
     this.drawMark();
@@ -66,9 +54,6 @@ export class MainMenu extends Scene {
     if (!this.markGraphics) {
       this.markGraphics = this.add.graphics();
     }
-    // Fixed scale of 1 — position only, never shrink. This is what was
-    // causing both the tiny size and the blur, back when this scaled with
-    // a 1024x768 reference like a full desktop layout.
     this.markGraphics.setPosition(centerX, markY);
     this.markGraphics.setScale(1);
     this.drawMark();

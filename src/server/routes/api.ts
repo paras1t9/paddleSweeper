@@ -17,6 +17,9 @@ import type {
   PracticeBombRequest,
   PracticeBombResponse,
   PracticeHintResponse,
+  SuperBombRequest,
+  SuperBombCellResult,
+  SuperBombResponse,
 } from '../../shared/api';
 import { computeScore } from '../../shared/api';
 import {
@@ -26,6 +29,7 @@ import {
   getHintCell,
   MAX_BOMBS,
   MAX_HINTS,
+  GRID_SIZE,
   toFleetManifest,
   FLEET_VERSION,
 } from '../core/puzzle';
@@ -36,10 +40,6 @@ type ErrorResponse = {
 };
 
 export const api = new Hono();
-
-// =========================================================================
-// ORIGINAL TEMPLATE ROUTES (unchanged)
-// =========================================================================
 
 api.get('/init', async (c) => {
   const { postId } = context;
@@ -120,15 +120,6 @@ api.post('/decrement', async (c) => {
   });
 });
 
-// =========================================================================
-// DAILY BATTLES ROUTES
-// =========================================================================
-
-// ---- Redis key helpers ----
-// FLEET_VERSION is baked in here — bump it in puzzle.ts whenever ship
-// shapes/sizes/rules change (including scoring rules), and old cached
-// puzzles/sessions become orphaned (harmless, just ignored) instead of
-// silently served stale.
 const puzzleKey = (dateKey: string) =>
   `daily-battles:v${FLEET_VERSION}:puzzle:${dateKey}`;
 const sessionKey = (dateKey: string, username: string) =>
@@ -136,14 +127,8 @@ const sessionKey = (dateKey: string, username: string) =>
 const leaderboardKey = (dateKey: string) =>
   `daily-battles:v${FLEET_VERSION}:leaderboard:${dateKey}`;
 
-// Deliberately NOT versioned with FLEET_VERSION — a streak is a long-lived
-// motivational record, and shouldn't reset just because we tweak ship
-// shapes or scoring. It only cares about "did you play yesterday".
 const streakKey = (username: string) => `daily-battles:streak:${username}`;
 
-// Practice mode — no date, no version. Each /practice/start overwrites
-// whatever practice session existed before; there's nothing worth
-// preserving across attempts.
 const practicePuzzleKey = (username: string) =>
   `daily-battles:practice:${username}:puzzle`;
 const practiceSessionKey = (username: string) =>
@@ -163,10 +148,6 @@ type SessionState = {
   gameOver: boolean;
   won: boolean;
 };
-
-// Practice sessions are structurally identical to real ones — reusing the
-// type (rather than a near-duplicate) guarantees applyResolvedCell() works
-// on both without risk of the two shapes silently drifting apart.
 type PracticeSessionState = SessionState;
 
 function emptyCellStates(): CellState[][] {
@@ -221,13 +202,11 @@ function sessionScore(session: SessionState, puzzle: Puzzle): number {
   return computeScore(
     puzzle.ships.map((s) => ({ id: s.id, size: s.size })),
     session.sunkShipIds,
-    session.hintsUsed
+    session.hintsUsed,
+    session.bombsUsed,
+    MAX_BOMBS
   );
 }
-
-// Applies a resolved hit/sunk cell to session state. Shared by /bomb, /hint,
-// and both practice equivalents, so none of the four paths can silently
-// diverge on how a "found" cell gets recorded.
 function applyResolvedCell(
   session: SessionState,
   outcome: ReturnType<typeof resolveBomb>,
@@ -257,23 +236,35 @@ type StreakRecord = {
   currentStreak: number;
   longestStreak: number;
   lastPlayedDateKey: string;
+  superBombs: number;
 };
 
 async function getStreakRecord(username: string): Promise<StreakRecord> {
   const raw = await redis.get(streakKey(username));
-  if (raw) return JSON.parse(raw) as StreakRecord;
-  return { currentStreak: 0, longestStreak: 0, lastPlayedDateKey: '' };
+  if (raw) {
+    const parsed = JSON.parse(raw) as Partial<StreakRecord>;
+    return {
+      currentStreak: parsed.currentStreak ?? 0,
+      longestStreak: parsed.longestStreak ?? 0,
+      lastPlayedDateKey: parsed.lastPlayedDateKey ?? '',
+      superBombs: parsed.superBombs ?? 0,
+    };
+  }
+  return {
+    currentStreak: 0,
+    longestStreak: 0,
+    lastPlayedDateKey: '',
+    superBombs: 0,
+  };
 }
 
 function toStreakInfo(record: StreakRecord): StreakInfo {
   return {
     currentStreak: record.currentStreak,
     longestStreak: record.longestStreak,
+    superBombs: record.superBombs,
   };
 }
-
-// Read-only — for responses that don't end a game (e.g. the initial load,
-// or an early-return on an already-finished session).
 async function peekStreak(username: string): Promise<StreakInfo> {
   return toStreakInfo(await getStreakRecord(username));
 }
@@ -289,9 +280,6 @@ function isConsecutiveDay(
   const diffDays = Math.round((curr - prev) / (24 * 60 * 60 * 1000));
   return diffDays === 1;
 }
-
-// Called exactly once, the moment a game actually finishes (win or loss).
-// Idempotent against being called twice for the same day, just in case.
 async function updateStreakOnFinish(
   username: string,
   dateKey: string
@@ -305,21 +293,31 @@ async function updateStreakOnFinish(
   const nextCurrent = isConsecutiveDay(record.lastPlayedDateKey, dateKey)
     ? record.currentStreak + 1
     : 1;
+  const earnedSuperBomb = nextCurrent > 0 && nextCurrent % 5 === 0;
   const nextRecord: StreakRecord = {
     currentStreak: nextCurrent,
     longestStreak: Math.max(record.longestStreak, nextCurrent),
     lastPlayedDateKey: dateKey,
+    superBombs: record.superBombs + (earnedSuperBomb ? 1 : 0),
   };
   await redis.set(streakKey(username), JSON.stringify(nextRecord));
   return toStreakInfo(nextRecord);
 }
+async function spendSuperBomb(
+  username: string
+): Promise<{ ok: boolean; streak: StreakInfo }> {
+  const record = await getStreakRecord(username);
+  if (record.superBombs <= 0) {
+    return { ok: false, streak: toStreakInfo(record) };
+  }
+  const nextRecord: StreakRecord = {
+    ...record,
+    superBombs: record.superBombs - 1,
+  };
+  await redis.set(streakKey(username), JSON.stringify(nextRecord));
+  return { ok: true, streak: toStreakInfo(nextRecord) };
+}
 
-// Checks whether the round just ended (all ships sunk, or out of bombs) and,
-// if so: marks the session over, records the leaderboard entry, and updates
-// the streak. Returns the fresh streak info if the game was just finished by
-// THIS call, or null if it was already over (nothing to do). Shared by
-// /bomb and /hint — a hint can complete the last ship just as validly as a
-// bomb can, so both paths need to end the game the same way.
 async function finishGameIfNeeded(
   session: SessionState,
   puzzle: Puzzle,
@@ -514,9 +512,6 @@ api.post('/bomb', async (c) => {
 
     let revealedShips: RevealedShip[] | undefined;
     if (justFinishedStreak && !session.won) {
-      // This bomb is what just ended the round, and it was a loss — reveal
-      // the ships that were never found instead of just cutting the round
-      // short with no closure.
       revealedShips = puzzle.ships
         .filter((s) => !session.sunkShipIds.includes(s.id))
         .map((s) => ({ id: s.id, name: s.name, cells: s.cells }));
@@ -606,8 +601,6 @@ api.post('/hint', async (c) => {
       });
     }
 
-    // getHintCell only ever returns an unhit, ship-occupied cell, so this is
-    // guaranteed to resolve as 'hit' or 'sunk' — never 'miss'/'already-bombed'.
     const outcome = resolveBomb(puzzle, hintCell.r, hintCell.c, hitsSoFar);
     applyResolvedCell(session, outcome, hintCell.r, hintCell.c);
     session.hintsUsed += 1;
@@ -637,6 +630,126 @@ api.post('/hint', async (c) => {
     console.error(`Hint error for post ${postId}:`, error);
     const message =
       error instanceof Error ? error.message : 'Unknown error resolving hint';
+    return c.json<ErrorResponse>({ status: 'error', message }, 400);
+  }
+});
+
+// ---- POST /api/super-bomb ----
+api.post('/super-bomb', async (c) => {
+  const { postId } = context;
+  if (!postId) {
+    return c.json<ErrorResponse>(
+      { status: 'error', message: 'postId is required' },
+      400
+    );
+  }
+
+  try {
+    const body = await c.req.json<SuperBombRequest>();
+    const { r, c: col } = body;
+
+    if (
+      typeof r !== 'number' ||
+      typeof col !== 'number' ||
+      r < 0 ||
+      r > GRID_SIZE - 2 ||
+      col < 0 ||
+      col > GRID_SIZE - 2
+    ) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Invalid super bomb target' },
+        400
+      );
+    }
+
+    const dateKey = todayDateKey();
+    const [usernameRaw, puzzle] = await Promise.all([
+      reddit.getCurrentUsername(),
+      getOrCreatePuzzle(dateKey),
+    ]);
+    const username = usernameRaw ?? 'anonymous';
+    const session = await getOrCreateSession(dateKey, username);
+
+    if (session.gameOver) {
+      const streak = await peekStreak(username);
+      return c.json<SuperBombResponse>({
+        cells: [],
+        superBombsLeft: streak.superBombs,
+        score: sessionScore(session, puzzle),
+        gameOver: true,
+        won: session.won,
+        streak,
+      });
+    }
+
+    const spend = await spendSuperBomb(username);
+    if (!spend.ok) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'No super bombs available' },
+        400
+      );
+    }
+    let streak = spend.streak;
+
+    // (r,c), (r,c+1), (r+1,c), (r+1,c+1) — always exactly these 4, in this
+    // order, so the client can map results back to grid positions directly.
+    const targets = [
+      { r, c: col },
+      { r, c: col + 1 },
+      { r: r + 1, c: col },
+      { r: r + 1, c: col + 1 },
+    ];
+
+    const hitsSoFar = new Set(session.hitKeys);
+    const cellResults: SuperBombCellResult[] = [];
+
+    for (const target of targets) {
+      const outcome = resolveBomb(puzzle, target.r, target.c, hitsSoFar);
+      if (outcome.result === 'already-bombed') {
+        cellResults.push({
+          r: target.r,
+          c: target.c,
+          result: 'already-bombed',
+        });
+        continue;
+      }
+      applyResolvedCell(session, outcome, target.r, target.c);
+      // Keep the local set in sync as we go — if two of the four targeted
+      // cells belong to the same ship, the second one needs to see the
+      // first one's hit already applied to correctly resolve as 'sunk'.
+      hitsSoFar.add(`${target.r},${target.c}`);
+      cellResults.push({
+        r: target.r,
+        c: target.c,
+        result: outcome.result,
+        shipId: outcome.shipId,
+        sunkShipCells: outcome.sunkShipCells,
+      });
+    }
+
+    const justFinishedStreak = await finishGameIfNeeded(
+      session,
+      puzzle,
+      dateKey,
+      username
+    );
+    if (justFinishedStreak) streak = justFinishedStreak;
+    await saveSession(dateKey, username, session);
+
+    return c.json<SuperBombResponse>({
+      cells: cellResults,
+      superBombsLeft: streak.superBombs,
+      score: sessionScore(session, puzzle),
+      gameOver: session.gameOver,
+      won: session.won,
+      streak,
+    });
+  } catch (error) {
+    console.error(`Super bomb error for post ${postId}:`, error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Unknown error resolving super bomb';
     return c.json<ErrorResponse>({ status: 'error', message }, 400);
   }
 });
@@ -710,12 +823,6 @@ api.post('/share-result', async (c) => {
       ? `\u2693 Solved today's Daily Battles fleet! Score: ${score} (${session.bombsUsed} bombs, ${session.hintsUsed} hints used)`
       : `\u2693 Fought today's Daily Battles fleet — found ${shipsFound}/${totalShips} ships. Score: ${score} (${session.bombsUsed} bombs, ${session.hintsUsed} hints used)`;
 
-    // Not using runAs: 'USER' here — that requires a specific
-    // permissions.reddit.asUser scope in devvit.json that Devvit's own docs
-    // don't spell out an exact value for, and getting it wrong just trades
-    // one error for another. Posting as the app avoids that dependency
-    // entirely; the comment text still clearly states it's the player's
-    // result, just not cryptographically "from" their account.
     await reddit.submitComment({ id: postId, text: resultLine });
 
     return c.json<ShareResultResponse>({ status: 'ok' });
@@ -726,12 +833,6 @@ api.post('/share-result', async (c) => {
     return c.json<ShareResultResponse>({ status: 'error', message });
   }
 });
-
-// =========================================================================
-// PRACTICE MODE — separate puzzle/session, no streak, no leaderboard,
-// no daily reset. Lets a new player learn the mechanics without spending
-// their one real attempt for the day.
-// =========================================================================
 
 api.post('/practice/start', async (c) => {
   const { postId } = context;

@@ -1,10 +1,3 @@
-// src/client/audio.ts
-//
-// All sound is synthesized live with the Web Audio API — no audio files to
-// load or host. A single module-level singleton (`audioManager`) is shared
-// across every scene, so the music keeps playing seamlessly through scene
-// transitions instead of restarting each time a Scene is recreated.
-
 class AudioManager {
   private ctx: AudioContext | null = null;
   private master: DynamicsCompressorNode | null = null;
@@ -15,14 +8,6 @@ class AudioManager {
   private readonly NORMAL_VOLUME = 0.65;
   private readonly DUCKED_VOLUME = 0.42;
 
-  // Safe to call as many times as you like, from anywhere, gesture or not.
-  // Only ever creates the AudioContext/music loop once — but critically,
-  // only marks itself "started" once the context is confirmed genuinely
-  // running. Browsers silently refuse to actually start audio outside a
-  // real user gesture (a click/tap), so a speculative early call (e.g. from
-  // a scene's create()) commonly creates the context but leaves it stuck
-  // 'suspended' — that's fine and expected. A later call from inside a
-  // real gesture handler will then retry resume() and succeed.
   async ensureStarted(): Promise<void> {
     if (this.started) return;
 
@@ -54,9 +39,6 @@ class AudioManager {
       this.musicSource = source;
     }
 
-    // Local const, not `this.ctx` — TypeScript drops narrowing of class
-    // properties across an `await`, since something else could reassign
-    // them in the meantime. This keeps the compiler (and the logic) honest.
     const ctx = this.ctx;
     if (!ctx) return;
 
@@ -75,8 +57,6 @@ class AudioManager {
     }
   }
 
-  // Called when the puzzle screen loads — lower the music so it sits behind
-  // gameplay instead of competing with it.
   duck(): void {
     if (!this.ctx || !this.musicGain) return;
     this.musicGain.gain.linearRampToValueAtTime(
@@ -85,7 +65,6 @@ class AudioManager {
     );
   }
 
-  // Called at GameOver — bring the music back up now that the round's done.
   restore(): void {
     if (!this.ctx || !this.musicGain) return;
     this.musicGain.gain.linearRampToValueAtTime(
@@ -102,8 +81,6 @@ class AudioManager {
     const master = this.master ?? ctx.destination;
     const t = ctx.currentTime;
 
-    // Splash — filtered noise sweeping down in tone, like a bomb hitting
-    // open water instead of a hull
     const noise = this.makeNoiseBurst(ctx, 0.22);
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = 'bandpass';
@@ -116,7 +93,6 @@ class AudioManager {
     noise.connect(noiseFilter).connect(noiseGain).connect(master);
     noise.start(t);
 
-    // Low plunk underneath, for weight
     const osc = ctx.createOscillator();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(180, t);
@@ -135,7 +111,6 @@ class AudioManager {
     const master = this.master ?? ctx.destination;
     const t = ctx.currentTime;
 
-    // Punchy low thump
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(180, t);
@@ -147,7 +122,6 @@ class AudioManager {
     osc.start(t);
     osc.stop(t + 0.15);
 
-    // Short noise crack on top, for impact
     const noise = this.makeNoiseBurst(ctx, 0.05);
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = 'highpass';
@@ -164,7 +138,6 @@ class AudioManager {
     const master = this.master ?? ctx.destination;
     const t = ctx.currentTime;
 
-    // Deep descending boom
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(160, t);
@@ -179,7 +152,6 @@ class AudioManager {
     osc.start(t);
     osc.stop(t + 0.65);
 
-    // Explosion noise layer
     const noise = this.makeNoiseBurst(ctx, 0.4);
     const noiseFilter = ctx.createBiquadFilter();
     noiseFilter.type = 'lowpass';
@@ -224,13 +196,6 @@ class AudioManager {
     source.buffer = buffer;
     return source;
   }
-
-  // Renders one loop of "aggravating battle" music into a buffer using an
-  // OfflineAudioContext: a dissonant low sawtooth pulse (driving 8th-note
-  // rhythm, alternating a minor-second-apart pair of low notes for tension),
-  // metallic filtered-noise clangs on the off-beats, and a very low
-  // continuous drone underneath for weight. Baked once, then looped forever
-  // by the caller via AudioBufferSourceNode.loop = true.
   private async renderMusicLoop(liveCtx: AudioContext): Promise<AudioBuffer> {
     const duration = 3.2; // 8 steps at 0.4s = one loop cycle
     const sampleRate = liveCtx.sampleRate;

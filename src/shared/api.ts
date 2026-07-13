@@ -32,21 +32,28 @@ export type FleetManifestEntry = {
 
 // Shared scoring formula — used by both client (real-time HUD display) and
 // server (authoritative leaderboard). Bigger ships are worth more; each hint
-// used costs a flat penalty. Floored at 0 so a hint-heavy round can't go
-// negative.
+// used costs a flat penalty; bombs saved add a smaller bonus, so efficiency
+// matters but finding the fleet is still the dominant factor (max ship
+// score 210 vs max efficiency bonus 64 — a full fleet always outscores a
+// merely-efficient partial one). Floored at 0 overall.
 export const SCORE_PER_CELL = 10;
 export const HINT_PENALTY = 15;
+export const BOMB_EFFICIENCY_BONUS = 2;
 
 export function computeScore(
   shipSizesById: { id: number; size: number }[],
   sunkShipIds: number[],
-  hintsUsed: number
+  hintsUsed: number,
+  bombsUsed: number,
+  bombsMax: number
 ): number {
   const sunkSet = new Set(sunkShipIds);
   const shipScore = shipSizesById
     .filter((s) => sunkSet.has(s.id))
     .reduce((sum, s) => sum + s.size * SCORE_PER_CELL, 0);
-  return Math.max(0, shipScore - hintsUsed * HINT_PENALTY);
+  const bombsRemaining = Math.max(0, bombsMax - bombsUsed);
+  const efficiencyBonus = bombsRemaining * BOMB_EFFICIENCY_BONUS;
+  return Math.max(0, shipScore + efficiencyBonus - hintsUsed * HINT_PENALTY);
 }
 
 // Streak info — persists across days, independent of any single day's
@@ -55,6 +62,7 @@ export function computeScore(
 export type StreakInfo = {
   currentStreak: number;
   longestStreak: number;
+  superBombs: number; // +1 every time currentStreak hits a multiple of 5
 };
 
 // GET /api/daily-puzzle
@@ -101,6 +109,31 @@ export type BombResponse = {
   // loss (gameOver && !won) — the ships that were never found, so the
   // client can show what was missed instead of just ending abruptly.
   revealedShips?: RevealedShip[];
+};
+
+// POST /api/super-bomb — earned via streak milestones, not tied to the
+// normal bomb count. Hits a 2x2 area at once: (r,c), (r,c+1), (r+1,c),
+// (r+1,c+1). r/c must leave room for the full 2x2 (0-8 on a 10-wide grid).
+export type SuperBombRequest = {
+  r: number;
+  c: number;
+};
+
+export type SuperBombCellResult = {
+  r: number;
+  c: number;
+  result: 'miss' | 'hit' | 'sunk' | 'already-bombed';
+  shipId?: number;
+  sunkShipCells?: { r: number; c: number }[];
+};
+
+export type SuperBombResponse = {
+  cells: SuperBombCellResult[]; // always 4, in (r,c)/(r,c+1)/(r+1,c)/(r+1,c+1) order
+  superBombsLeft: number;
+  score: number;
+  gameOver: boolean;
+  won: boolean;
+  streak: StreakInfo;
 };
 
 // POST /api/hint — no request body needed

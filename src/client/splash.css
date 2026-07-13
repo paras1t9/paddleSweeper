@@ -42,9 +42,6 @@ body.app {
   background-size: 32px 32px;
   pointer-events: none;
 }
-
-/* Sweep now scoped to the icon itself, not the whole page —
-   it reads as "the sonar icon is animating", not a stray light beam. */
 .mark-wrap {
   position: relative;
   width: 72px;

@@ -32,7 +32,7 @@ export class GameOver extends Scene {
   bombsMax = 32;
   hintsUsed = 0;
   score = 0;
-  streak: StreakInfo = { currentStreak: 0, longestStreak: 0 };
+  streak: StreakInfo = { currentStreak: 0, longestStreak: 0, superBombs: 0 };
   practice = false;
 
   resultText: Phaser.GameObjects.Text | null = null;
@@ -44,9 +44,6 @@ export class GameOver extends Scene {
   playRealButton: Phaser.GameObjects.Text | null = null;
   menuButton: Phaser.GameObjects.Text | null = null;
 
-  // Every text element that only ever needs re-centering (not repositioning)
-  // on resize goes in here, so layout() doesn't need a long list of named
-  // optional fields to know about.
   centeredTexts: Phaser.GameObjects.Text[] = [];
 
   constructor() {
@@ -59,10 +56,13 @@ export class GameOver extends Scene {
     this.bombsMax = data?.bombsMax ?? 32;
     this.hintsUsed = data?.hintsUsed ?? 0;
     this.score = data?.score ?? 0;
-    this.streak = data?.streak ?? { currentStreak: 0, longestStreak: 0 };
+    this.streak = data?.streak ?? {
+      currentStreak: 0,
+      longestStreak: 0,
+      superBombs: 0,
+    };
     this.practice = data?.practice ?? false;
 
-    // Reset cached objects — this Scene instance is reused across replays.
     this.resultText = null;
     this.scoreText = null;
     this.shareButton = null;
@@ -122,8 +122,6 @@ export class GameOver extends Scene {
     cursorY += 28;
 
     if (this.practice) {
-      // Practice never scores, streaks, or shares — just a fast way back
-      // into the real puzzle.
       const note = this.add
         .text(
           centerX,
@@ -165,17 +163,26 @@ export class GameOver extends Scene {
         this.scene.start('Game', { practice: false })
       );
     } else {
-      const streakLabel = `Streak: ${this.streak.currentStreak} day${this.streak.currentStreak === 1 ? '' : 's'} (best: ${this.streak.longestStreak})`;
+      const superBombNote =
+        this.streak.superBombs > 0
+          ? `  \u2022  ${this.streak.superBombs} super bomb${this.streak.superBombs === 1 ? '' : 's'} ready`
+          : '';
+      const streakLabel = `Streak: ${this.streak.currentStreak} day${this.streak.currentStreak === 1 ? '' : 's'} (best: ${this.streak.longestStreak})${superBombNote}`;
       const streakText = this.add
         .text(centerX, cursorY, streakLabel, {
           fontFamily: 'Courier New',
           fontSize: 13,
           color:
             this.streak.currentStreak > 0 ? COLORS.radarGreen : COLORS.fogDim,
+          align: 'center',
+          wordWrap: {
+            width: Math.min(this.scale.width - 40, 380),
+            useAdvancedWrap: true,
+          },
         })
         .setOrigin(0.5);
       this.centeredTexts.push(streakText);
-      cursorY += 32;
+      cursorY += superBombNote ? 46 : 32;
 
       this.shareButton = this.add
         .text(centerX, cursorY, 'Share Result', {
